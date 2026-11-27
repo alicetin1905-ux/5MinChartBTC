@@ -28,8 +28,14 @@ In Claude Code (vanuit deze map):
 
 ## Automatisch elke 15 minuten
 
-De workflow `.github/workflows/btc5m-schedule.yml` draait elke 15 minuten via GitHub
-Actions `python -m btc5m run`. Daarna:
+De workflow `.github/workflows/btc5m-schedule.yml` draait elke 15 minuten (op :03, :18, :33 en
+:48 UTC) `python -m btc5m run`. De planner van GitHub bleek in deze repo onbetrouwbaar: hij sloeg
+alle geplande runs over. Daarom start elke run zelf de volgende (**zelfstartende keten**): na de analyse
+wacht de run tot het volgende tijdstip en start dan een nieuwe run. Een controle voorkomt dubbele
+ketens, en het GitHub-schema blijft als reserve staan. Is de keten ooit gestopt, start dan één run met
+de hand via Actions → *BTC 5m analyse* → **Run workflow**; de keten loopt daarna weer door.
+
+Na elke run:
 
 - staat de samenvatting bij elke run in het tabblad **Actions** (job summary);
 - komen de rapporten op de aparte branch **`btc-reports`**. Die branch wordt elke run vervangen door

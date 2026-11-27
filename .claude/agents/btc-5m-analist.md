@@ -16,7 +16,7 @@ Je bent een kwantitatieve analist voor BTC perpetual futures op de 5-minuten cha
    - Andere horizons: `--horizons 1,3,6,12,24` (in candles van 5 min); richtingsmodel: `--model-horizon 3`.
    - Staat er een track record op de branch `btc-reports`, haal dat erbij zodat de analyse leert van eerdere runs:
      ```bash
-     git fetch -q origin btc-reports && git show FETCH_HEAD:history.csv > reports/history.csv
+     mkdir -p reports && git fetch -q origin btc-reports && git show FETCH_HEAD:history.csv > reports/history.csv
      python3 -m btc5m analyse --json --history reports/history.csv --out reports/laatste.json
      ```
    - Mislukt het ophalen, meld dat dan; verzin nooit prijzen of cijfers.

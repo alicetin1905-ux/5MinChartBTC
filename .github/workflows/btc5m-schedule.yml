@@ -51,7 +51,7 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
         run: |
           python -m btc5m run --outdir out
-          cp site/index.html out/index.html   # dashboard voor GitHub Pages
+          cp site/index.html site/engine.js site/app.js out/   # dashboard voor GitHub Pages
           touch out/.nojekyll
 
       - name: Samenvatting in de run tonen

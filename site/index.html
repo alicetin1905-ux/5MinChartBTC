@@ -5,141 +5,319 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BTC 5m analist</title>
 <link rel="icon" href="data:,">
-<meta name="description" content="Live analyse en kansverwachting voor de 5-minuten chart van BTC perpetual futures, elke 15 minuten bijgewerkt.">
+<meta name="description" content="Live, interactieve analyse van de 5-minuten chart van BTC perpetual futures: koers, indicatoren, Monte Carlo-simulatie en richtingsmodel, allemaal zichtbaar berekend in je browser.">
 <style>
 :root {
   color-scheme: light;
-  --page: #f9f9f9;
-  --surface-1: #ffffff;
-  --text-primary: #191919;
-  --text-secondary: #666666;
-  --grid: #e7e7e7;
-  --axis: #c2c2c2;
-  --border: rgba(11, 11, 11, 0.10);
-  --series-1: #257de0;
-  --good: #006c10;
-  --bad: #dc3c3d;
+  --page: #f9f9f9; --surface-1: #ffffff; --surface-2: #f3f3f3;
+  --text-primary: #191919; --text-secondary: #666666;
+  --grid: #e7e7e7; --axis: #c2c2c2; --border: rgba(11, 11, 11, 0.10);
+  --series-1: #257de0; --up: #008a17; --down: #ec4647;
+  --up-text: #006c10; --down-text: #c42f30;
+  --ema9: #f47230; --ema21: #6a4ce2; --ema50: #ee7fac; --vwap: #f2a600; --bb: #999999;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --page: #0b0b0b;
-    --surface-1: #191919;
-    --text-primary: #efefef;
-    --text-secondary: #9c9c9c;
-    --grid: #303030;
-    --axis: #474747;
-    --border: rgba(255, 255, 255, 0.10);
-    --series-1: #338ced;
-    --good: #53c556;
-    --bad: #eb6263;
+    --page: #0b0b0b; --surface-1: #191919; --surface-2: #222222;
+    --text-primary: #efefef; --text-secondary: #9c9c9c;
+    --grid: #303030; --axis: #474747; --border: rgba(255, 255, 255, 0.10);
+    --series-1: #338ced; --up: #0aac23; --down: #eb6263;
+    --up-text: #53c556; --down-text: #f07a7b;
+    --ema9: #e76624; --ema21: #9887ef; --ema50: #e24d8b; --vwap: #d28e05; --bb: #777777;
   }
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--page);
-  color: var(--text-primary);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
-header h1 { font-size: 22px; font-weight: 600; margin: 0; }
+body { margin: 0; background: var(--page); color: var(--text-primary); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .sub { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
-.card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  margin-top: 16px;
-  transition: opacity .2s;
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-top: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.spread { justify-content: space-between; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* status */
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); }
+.badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.badge.live i { background: var(--up); animation: pulse 1.6s infinite; }
+.badge.live { color: var(--text-primary); }
+.badge.warn i { background: var(--vwap); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--up) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+@media (max-width: 900px) { .hero { grid-template-columns: 1fr 1fr; } .hero .price-tile { grid-column: 1 / -1; } }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; min-width: 0; }
+.tile .label { color: var(--text-secondary); font-size: 12px; }
+.tile .value { font-size: 20px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.tile .delta { color: var(--text-secondary); font-size: 12px; }
+.price-tile .value { font-size: 34px; line-height: 1.15; transition: color .6s; }
+.price-tile .value.up { color: var(--up-text); transition: none; }
+.price-tile .value.down { color: var(--down-text); transition: none; }
+.bar { height: 4px; background: var(--surface-2); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--series-1); border-radius: 2px; width: 0; transition: width 1s linear; }
+
+/* controls */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 14px; }
+.group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.group > .lbl { color: var(--text-secondary); font-size: 12px; margin-right: 2px; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+.seg button, .chip, .btn {
+  font: inherit; font-size: 13px; border: 0; cursor: pointer; color: var(--text-primary);
+  background: transparent; padding: 4px 10px; border-radius: 6px;
 }
-.card h2 { font-size: 16px; font-weight: 600; margin: 0; }
-.loading .card, .loading .tiles { opacity: .55; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
-.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
-.card .tiles { margin-top: 12px; }
-.card .tile { background: transparent; }
-.tile .label { color: var(--text-secondary); font-size: 13px; }
-.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
-.tile .delta { color: var(--text-secondary); font-size: 13px; }
-.chart { position: relative; margin-top: 12px; }
-.chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
-.chart svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
-.legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--text-secondary); font-size: 13px; margin-top: 8px; }
+.seg button[aria-pressed="true"] { background: var(--surface-1); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border-radius: 999px; padding: 3px 10px; }
+.chip i { width: 14px; height: 2px; border-radius: 1px; }
+.chip[aria-pressed="false"] { opacity: .45; }
+.chip[aria-pressed="false"] i { background: var(--axis) !important; }
+.btn { background: var(--series-1); color: #fff; font-weight: 600; padding: 6px 14px; border-radius: 8px; }
+.btn:disabled { opacity: .6; cursor: progress; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+input[type=range] { accent-color: var(--series-1); width: 110px; }
+
+/* chart */
+.chartwrap { position: relative; margin-top: 10px; }
+canvas { display: block; width: 100%; }
+#chart { touch-action: pan-y; cursor: crosshair; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 12px; margin-top: 8px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
-.key-line { width: 16px; height: 2px; background: var(--series-1); border-radius: 1px; }
-.key-line.faint { opacity: .6; }
-.key-rect { width: 14px; height: 10px; background: var(--series-1); border-radius: 2px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.grid2 > .card { margin-top: 16px; min-width: 0; }
-@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+.k-line { width: 14px; height: 2px; border-radius: 1px; background: var(--series-1); }
+.k-rect { width: 12px; height: 9px; border-radius: 2px; background: var(--series-1); }
+.k-up { width: 8px; height: 11px; border: 1.5px solid var(--up); border-radius: 1px; }
+.k-down { width: 8px; height: 11px; background: var(--down); border-radius: 1px; }
+.simstatus { color: var(--text-secondary); font-size: 12px; min-height: 18px; }
+
+/* panels */
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1000px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.steps { margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; }
+.steps li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 6px 0; border-top: 1px solid var(--grid); }
+.steps li:first-child { border-top: 0; }
+.steps b.n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); font-size: 11px; }
+.steps li.active b.n { background: var(--series-1); color: #fff; }
+.formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+.big { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin-top: 8px; }
+.kv dt { color: var(--text-secondary); } .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* bijdragen richtingsmodel */
+.contrib { margin-top: 10px; font-size: 12px; }
+.contrib .r { display: grid; grid-template-columns: 118px 1fr 52px; align-items: center; gap: 6px; height: 21px; }
+.contrib .nm { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contrib .track { position: relative; height: 10px; }
+.contrib .track::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--axis); }
+.contrib .fill { position: absolute; top: 0; height: 10px; border-radius: 2px; transition: left .6s, width .6s, background-color .6s; }
+.contrib .val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* indicatoren */
+.gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 8px; }
+.gauge .label { color: var(--text-secondary); font-size: 12px; }
+.gauge .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.needle { transition: transform .8s cubic-bezier(.3,1.4,.5,1); transform-origin: 50px 50px; }
+.meter { position: relative; height: 8px; border-radius: 4px; background: var(--surface-2); margin-top: 6px; }
+.meter i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--text-primary); transition: left .8s; }
+.votes { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+.votes li { display: flex; justify-content: space-between; padding: 2px 0; transition: background-color 1s; }
+.votes li.flash { background: color-mix(in srgb, var(--series-1) 18%, transparent); }
+.votes .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* tabellen / tape */
 .scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
-th { text-align: left; color: var(--text-secondary); font-weight: 500; font-size: 13px; }
-th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 10px 0 0; font-size: 14px; }
-dt { color: var(--text-secondary); }
-dd { margin: 0; font-variant-numeric: tabular-nums; }
-.ok { color: var(--good); }
-.no { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+th { text-align: left; color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+th, td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.tape { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; min-height: 262px; }
+.tape li { display: grid; grid-template-columns: 62px 16px 1fr 70px; gap: 4px; padding: 2px 0; font-variant-numeric: tabular-nums; animation: slidein .35s ease-out; }
+.tape .t { color: var(--text-secondary); }
+.tape .sz { text-align: right; color: var(--text-secondary); }
+.tape li.big-trade { font-weight: 700; }
+@keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.ok { color: var(--up-text); } .no { color: var(--down-text); }
 .prose { white-space: pre-wrap; font-size: 14px; margin-top: 10px; }
-.note { color: var(--text-secondary); font-size: 13px; margin-top: 10px; }
-.error { color: var(--bad); }
-footer { color: var(--text-secondary); font-size: 13px; margin-top: 24px; }
+footer { color: var(--text-secondary); font-size: 12px; margin-top: 22px; }
 footer a { color: inherit; }
-.tip {
-  position: fixed; pointer-events: none; z-index: 10;
-  background: var(--surface-1); color: var(--text-primary);
-  border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
-  padding: 8px 10px; font-size: 13px; min-width: 150px;
-}
-.tip .t { color: var(--text-secondary); margin-bottom: 4px; }
-.tip .row { display: flex; justify-content: space-between; gap: 12px; }
-.tip .row b { font-variant-numeric: tabular-nums; }
-.tip .row span { color: var(--text-secondary); }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.14); padding: 8px 10px; font-size: 12px; min-width: 160px; }
+.tip .t { color: var(--text-secondary); margin-bottom: 3px; }
+.tip .r { display: flex; justify-content: space-between; gap: 14px; }
+.tip .r span { color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; }
+.tip .r b { font-variant-numeric: tabular-nums; }
+.tip .r i { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-<main id="app" class="loading">
-  <header>
-    <h1>BTC perpetual · 5m analyse</h1>
-    <p class="sub" id="meta">Laden…</p>
+<main>
+  <header class="row spread">
+    <div>
+      <h1>BTC perpetual · 5m analist</h1>
+      <p class="sub" id="meta">Laden…</p>
+    </div>
+    <span class="badge" id="conn"><i></i><span>verbinden…</span></span>
   </header>
 
-  <section class="tiles" id="tiles" aria-label="Kerncijfers"></section>
+  <section class="hero">
+    <div class="tile price-tile">
+      <div class="label">BTC-USDT perpetual · live</div>
+      <div class="value" id="price">—</div>
+      <div class="delta" id="priceDelta">&nbsp;</div>
+    </div>
+    <div class="tile"><div class="label">Candle sluit over</div><div class="value" id="cdCandle">—</div><div class="bar"><i id="cdCandleBar"></i></div></div>
+    <div class="tile"><div class="label">Kans hoger over 15 min (live)</div><div class="value" id="pLive">—</div><div class="delta" id="pLiveSub">&nbsp;</div></div>
+    <div class="tile"><div class="label">Bandbreedte komend uur (90%)</div><div class="value" id="band60">—</div><div class="delta" id="band60Sub">&nbsp;</div></div>
+    <div class="tile"><div class="label">Technische bias</div><div class="value" id="bias">—</div><div class="delta" id="biasSub">&nbsp;</div></div>
+  </section>
+
+  <section class="controls" aria-label="Instellingen grafiek en simulatie">
+    <div class="group"><span class="lbl">Bereik</span>
+      <div class="seg" id="rangeSeg">
+        <button data-v="36">3u</button><button data-v="72" aria-pressed="true">6u</button><button data-v="144">12u</button><button data-v="288">24u</button>
+      </div>
+    </div>
+    <div class="group" id="overlays"><span class="lbl">Lijnen</span>
+      <button class="chip" data-k="ema9" aria-pressed="true"><i style="background:var(--ema9)"></i>EMA 9</button>
+      <button class="chip" data-k="ema21" aria-pressed="true"><i style="background:var(--ema21)"></i>EMA 21</button>
+      <button class="chip" data-k="ema50" aria-pressed="false"><i style="background:var(--ema50)"></i>EMA 50</button>
+      <button class="chip" data-k="vwap" aria-pressed="true"><i style="background:var(--vwap)"></i>VWAP</button>
+      <button class="chip" data-k="bb" aria-pressed="false"><i style="background:var(--bb)"></i>Bollinger</button>
+      <button class="chip" data-k="levels" aria-pressed="true"><i style="background:var(--text-secondary)"></i>Steun/weerstand</button>
+    </div>
+  </section>
+  <section class="controls" aria-label="Monte Carlo-instellingen">
+    <div class="group"><span class="lbl">Simulatie: horizon</span>
+      <div class="seg" id="horizonSeg">
+        <button data-v="3">15m</button><button data-v="6">30m</button><button data-v="12" aria-pressed="true">60m</button><button data-v="24">2u</button>
+      </div>
+    </div>
+    <div class="group"><span class="lbl">paden</span>
+      <div class="seg" id="pathsSeg">
+        <button data-v="300">300</button><button data-v="2000" aria-pressed="true">2.000</button><button data-v="10000">10.000</button>
+      </div>
+    </div>
+    <div class="group"><label class="lbl" for="volSlider">volatiliteitsfactor</label>
+      <input type="range" id="volSlider" min="0.5" max="2" step="0.01" value="1">
+      <span class="num" id="volVal" style="font-size:13px;min-width:92px">×1,00</span>
+    </div>
+    <button class="btn" id="simBtn">▶ Simuleer</button>
+  </section>
 
   <section class="card">
-    <h2>Koers en verwachting komend uur</h2>
-    <p class="sub">Slotkoers per 5 minuten (laatste 6 uur, op mobiel 3 uur; lokale tijd). Rechts van "nu" de gesimuleerde bandbreedte voor het komende uur.</p>
-    <div class="chart" id="chart"></div>
+    <div class="row spread">
+      <h2>Koers, indicatoren en Monte Carlo-verwachting</h2>
+      <span class="simstatus" id="simStatus"></span>
+    </div>
+    <div class="chartwrap"><canvas id="chart" tabindex="0" role="img" aria-label="Candlestick-grafiek van BTC met verwachting. Pijltjestoetsen bewegen de cursor."></canvas></div>
     <div class="legend" aria-hidden="true">
-      <span><i class="key-line"></i>Slotkoers</span>
-      <span><i class="key-line faint"></i>Mediaan verwachting</span>
-      <span><i class="key-rect" style="opacity:.32"></i>50% kans</span>
-      <span><i class="key-rect" style="opacity:.12"></i>90% kans</span>
+      <span><i class="k-up"></i>stijgende candle (hol)</span>
+      <span><i class="k-down"></i>dalende candle (gevuld)</span>
+      <span><i class="k-line" style="opacity:.25"></i>gesimuleerde paden</span>
+      <span><i class="k-rect" style="opacity:.32"></i>50% kans</span>
+      <span><i class="k-rect" style="opacity:.14"></i>90% kans</span>
+      <span><i class="k-line"></i>mediaan</span>
     </div>
   </section>
 
+  <div class="grid3">
+    <section class="card">
+      <h2>Berekening 1 · Monte Carlo</h2>
+      <p class="sub">Duizenden mogelijke koerspaden; de verdeling van de eindprijzen geeft de bandbreedte.</p>
+      <canvas id="hist" aria-label="Histogram van gesimuleerde eindprijzen"></canvas>
+      <ol class="steps" id="mcSteps">
+        <li data-s="1"><b class="n">1</b><div>Volatiliteit nu (EWMA)<div class="formula" id="mcSigma">σ² = 0,94·σ²₋₁ + 0,06·r²</div></div></li>
+        <li data-s="2"><b class="n">2</b><div>Geleerde correctie<div class="formula" id="mcScale">σ × factor</div></div></li>
+        <li data-s="3"><b class="n">3</b><div>Per stap: schok uit historische rendementen<div class="formula">P<sub>t+1</sub> = P<sub>t</sub>·e<sup>σ·z − ½σ²</sup></div></div></li>
+        <li data-s="4"><b class="n">4</b><div>Uitkomst <span id="mcHz">over 60 min</span><div class="formula" id="mcResult">—</div></div></li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Berekening 2 · Richtingsmodel</h2>
+      <p class="sub">Logistische regressie: elke feature duwt de kans omhoog (groen) of omlaag (rood). Herberekend bij elke tick.</p>
+      <div class="contrib" id="contrib"></div>
+      <svg id="sigmoid" viewBox="0 0 300 92" width="100%" aria-label="Sigmoïde: van som naar kans"></svg>
+      <div class="formula" id="dirFormula" style="margin-top:4px">—</div>
+    </section>
+
+    <section class="card">
+      <h2>Indicatoren live</h2>
+      <div class="gauges">
+        <div class="gauge">
+          <div class="label">RSI 14</div>
+          <svg viewBox="0 0 100 58" width="100%" style="max-width:150px">
+            <path d="M10 50 A40 40 0 0 1 90 50" fill="none" stroke="var(--surface-2)" stroke-width="9"/>
+            <path d="M10 50 A40 40 0 0 1 17.6 26.5" fill="none" stroke="var(--up)" stroke-opacity=".45" stroke-width="9"/>
+            <path d="M82.4 26.5 A40 40 0 0 1 90 50" fill="none" stroke="var(--down)" stroke-opacity=".45" stroke-width="9"/>
+            <g class="needle" id="rsiNeedle"><line x1="50" y1="50" x2="50" y2="16" stroke="var(--text-primary)" stroke-width="2.5" stroke-linecap="round"/></g>
+            <circle cx="50" cy="50" r="4" fill="var(--text-primary)"/>
+          </svg>
+          <div class="value" id="rsiVal">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">MACD-histogram (laatste 4 uur)</div>
+          <svg id="macdSpark" viewBox="0 0 150 58" width="100%" preserveAspectRatio="none" style="height:58px"></svg>
+          <div class="value" id="macdVal">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">Bollinger %B</div>
+          <div class="meter"><i id="pctbMark"></i></div>
+          <div class="value" id="pctbVal" style="margin-top:4px">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">Volatiliteit σ per 5m (laatste 6 uur)</div>
+          <svg id="sigmaSpark" viewBox="0 0 150 40" width="100%" preserveAspectRatio="none" style="height:40px"></svg>
+          <div class="value" id="sigmaVal">—</div>
+        </div>
+      </div>
+      <h2 style="margin-top:12px">Scorekaart <span class="sub" id="scoreTotal"></span></h2>
+      <ul class="votes" id="votes"></ul>
+    </section>
+  </div>
+
   <div class="grid2">
     <section class="card">
-      <h2>Kansverdeling</h2>
-      <p class="sub">Prijs waarbinnen de koers met 50% en 90% kans uitkomt, zonder richtingsaanname.</p>
-      <div class="scroll"><table id="dist"></table></div>
-      <p class="note" id="touch"></p>
+      <h2>Live transacties</h2>
+      <p class="sub" id="tapeSub">Elke trade op OKX BTC-USDT-SWAP, zodra hij plaatsvindt.</p>
+      <ul class="tape" id="tape"></ul>
     </section>
     <section class="card">
-      <h2>Technisch beeld</h2>
-      <dl id="tech"></dl>
+      <h2>Kansverdeling (live)</h2>
+      <p class="sub">Prijs waarbinnen de koers met 50% en 90% kans uitkomt, en de kans om niveaus te raken.</p>
+      <div class="scroll"><table id="dist"></table></div>
+      <dl class="kv" id="futures"></dl>
     </section>
   </div>
 
   <section class="card">
-    <h2>Zelflerend: hoe goed klopten eerdere voorspellingen?</h2>
-    <p class="sub" id="learnSub"></p>
-    <div class="tiles" id="learnTiles"></div>
-    <h2 style="margin-top:16px">Laatste live voorspellingen</h2>
+    <div class="row spread">
+      <h2>Zelflerend · voorspelling tegenover werkelijkheid</h2>
+      <div class="seg" id="evalSeg"><button data-v="all" aria-pressed="true">alles</button><button data-v="live">alleen live</button></div>
+    </div>
+    <p class="sub" id="evalSub"></p>
+    <div class="grid2" style="gap:18px">
+      <div>
+        <svg id="bandChart" width="100%" height="240" aria-label="Voorspelde 90%-banden en werkelijke uitkomsten"></svg>
+        <div class="legend" aria-hidden="true">
+          <span><i class="k-rect" style="opacity:.25;height:12px;width:4px"></i>90%-band</span>
+          <span><i class="k-rect" style="opacity:.55;height:12px;width:4px"></i>50%-band</span>
+          <span><i style="width:8px;height:8px;border-radius:50%;background:var(--text-secondary)"></i>uitkomst binnen band</span>
+          <span><i style="width:8px;height:8px;border-radius:50%;background:var(--down)"></i>uitkomst buiten band</span>
+        </div>
+      </div>
+      <div>
+        <svg id="calChart" width="100%" height="240" aria-label="Kalibratie: voorspelde kans tegenover werkelijke frequentie"></svg>
+        <p class="sub">Kalibratie: liggen de punten op de diagonaal, dan klopt "55% kans" ook echt in 55% van de gevallen. Een vlakke lijn rond 50% betekent: richting is toeval.</p>
+      </div>
+    </div>
+    <div class="row" id="learnTiles" style="margin-top:10px;gap:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Laatste live voorspellingen van de server</h2>
     <div class="scroll"><table id="recent"></table></div>
   </section>
 
@@ -149,319 +327,14 @@ footer a { color: inherit; }
   </section>
 
   <footer>
-    <p>Statistische analyse, geen financieel advies. Op de 5-minuten chart is de richting van BTC grotendeels ruis;
-      gebruik de kansen als bandbreedte, niet als zekerheid.</p>
-    <p>Data: <a href="latest.json">latest.json</a> · <a href="history.csv">history.csv</a> ·
-      <a href="learning.json">learning.json</a> · <a href="latest.md">latest.md</a> ·
-      <a href="https://github.com/alicetin1905-ux/5MinChartBTC">broncode</a></p>
+    <p>Statistische analyse, geen financieel advies. Op de 5-minuten chart is de richting van BTC grotendeels ruis; gebruik de kansen als bandbreedte, niet als zekerheid.</p>
+    <p>Live koersen: OKX publieke API, rechtstreeks in je browser. Modelparameters en track record: server-run elke 15 min.
+      Data: <a href="latest.json">latest.json</a> · <a href="model.json">model.json</a> · <a href="history.csv">history.csv</a> · <a href="latest.md">latest.md</a> ·
+      <a href="https://github.com/alicetin1905-ux/5MinChartBTC">broncode</a> · <a href="?demo=1">demo-modus</a></p>
   </footer>
 </main>
 <div class="tip" id="tip" hidden></div>
-
-<script>
-"use strict";
-const NF = (d = 0) => new Intl.NumberFormat("nl-NL", { minimumFractionDigits: d, maximumFractionDigits: d });
-const usd = (x) => NF(0).format(x);
-const pct = (x, d = 1) => NF(d).format(x * 100) + "%";
-const signed = (x, d = 2) => (x > 0 ? "+" : x < 0 ? "−" : "") + NF(d).format(Math.abs(x)) + "%";
-const timeFmt = new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit" });
-const dateTimeFmt = new Intl.DateTimeFormat("nl-NL", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const $ = (id) => document.getElementById(id);
-const SVGNS = "http://www.w3.org/2000/svg";
-
-function el(tag, attrs = {}, text) {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-function svg(tag, attrs = {}, text) {
-  const n = document.createElementNS(SVGNS, tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-async function getJSON(name, bust) {
-  const r = await fetch(`${name}?t=${bust}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
-  return r.json();
-}
-
-// ------------------------------------------------------------------ tiles
-function tile(parent, label, value, delta) {
-  const t = el("div", { class: "tile" });
-  t.append(el("div", { class: "label" }, label), el("div", { class: "value" }, value));
-  if (delta) t.append(el("div", { class: "delta" }, delta));
-  parent.append(t);
-}
-
-function renderTiles(a) {
-  const s = a.snapshot, mc = a.monte_carlo, dm = a.direction_model, d = a.derivatives || {};
-  const box = $("tiles"); box.replaceChildren();
-  tile(box, "Prijs (USDT)", usd(s.price), `1u ${signed(s.change_pct["1h"])} · 24u ${signed(s.change_pct["24h"])}`);
-  tile(box, "Technische bias", s.bias, `score ${s.score > 0 ? "+" : ""}${s.score} · trend 5m ${s.trend_5m}`);
-  tile(box, `Kans hoger over ${dm.horizon_min} min`, pct(dm.p_up), `ruw model ${pct(dm.p_up_raw)} · ${a.model_verdict.split(" – ")[0]}`);
-  const h60 = mc.horizons["60m"];
-  if (h60) tile(box, "Bandbreedte komend uur (90%)", `${usd(h60.p05)} – ${usd(h60.p95)}`, `gemiddelde beweging ±${NF(2).format(h60.expected_abs_move_pct)}%`);
-  if (d.funding_rate !== undefined) tile(box, "Funding rate (per 8 uur)", signed(d.funding_rate * 100, 4),
-    `open interest ≈ $${NF(2).format(d.open_interest_usd / 1e9)} mld`);
-}
-
-// ------------------------------------------------------------------ chart
-let chartState = null;
-
-function niceTicks(min, max, count) {
-  const span = max - min, raw = span / count;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
-  const out = [];
-  for (let v = Math.ceil(min / step) * step; v <= max; v += step) out.push(v);
-  return out;
-}
-
-function renderChart(a, candles) {
-  const host = $("chart");
-  const W = Math.max(320, host.clientWidth), H = W < 560 ? 280 : 360;
-  const small = W < 560;
-  const m = { top: 12, right: small ? 78 : 92, bottom: 28, left: small ? 52 : 64 };
-  const hist = candles.slice(small ? -36 : -72).map((c) => ({ t: c[0], o: c[1], h: c[2], l: c[3], c: c[4], kind: "hist" }));
-  const last = hist[hist.length - 1];
-  const tNow = last.t;
-  const fc = [{ t: tNow, p05: last.c, p25: last.c, p50: last.c, p75: last.c, p95: last.c, bars: 0 }];
-  for (const [, h] of Object.entries(a.monte_carlo.horizons).sort((x, y) => x[1].bars - y[1].bars)) {
-    fc.push({ t: tNow + h.bars * 300000, ...h, kind: "fc" });
-  }
-  const lv = a.snapshot.levels;
-  let lo = Math.min(...hist.map((d) => d.c), ...fc.map((d) => d.p05));
-  let hi = Math.max(...hist.map((d) => d.c), ...fc.map((d) => d.p95));
-  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
-  const levels = [];
-  if (lv.resistance?.length && lv.resistance[0] < hi + (hi - lo) * 0.3) levels.push({ v: lv.resistance[0], name: "weerstand" });
-  if (lv.support?.length && lv.support[0] > lo - (hi - lo) * 0.3) levels.push({ v: lv.support[0], name: "steun" });
-  for (const l of levels) { lo = Math.min(lo, l.v - pad / 2); hi = Math.max(hi, l.v + pad / 2); }
-
-  const t0 = hist[0].t, t1 = fc[fc.length - 1].t;
-  const x = (t) => m.left + ((t - t0) / (t1 - t0)) * (W - m.left - m.right);
-  const y = (v) => m.top + (1 - (v - lo) / (hi - lo)) * (H - m.top - m.bottom);
-
-  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", tabindex: "0",
-    "aria-label": `Slotkoers laatste ${small ? 3 : 6} uur, nu ${usd(last.c)} USDT, met verwachte bandbreedte voor het komende uur. Gebruik de pijltjestoetsen om door de punten te gaan.` });
-
-  // grid + y-axis
-  for (const v of niceTicks(lo, hi, H < 300 ? 4 : 6)) {
-    root.append(svg("line", { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }));
-    root.append(svg("text", { x: m.left - 8, y: y(v), "text-anchor": "end", "dominant-baseline": "middle",
-      fill: "var(--text-secondary)", "font-size": 12, style: "font-variant-numeric: tabular-nums" }, usd(v)));
-  }
-  // x-axis (elk heel uur)
-  root.append(svg("line", { x1: m.left, x2: W - m.right, y1: H - m.bottom, y2: H - m.bottom, stroke: "var(--axis)", "stroke-width": 1 }));
-  const every = 3600000;
-  for (let t = Math.ceil(t0 / every) * every; t <= tNow; t += every) {
-    root.append(svg("text", { x: x(t), y: H - m.bottom + 18, "text-anchor": "middle", fill: "var(--text-secondary)", "font-size": 12 },
-      timeFmt.format(new Date(t))));
-  }
-  // "nu"
-  root.append(svg("line", { x1: x(tNow), x2: x(tNow), y1: m.top, y2: H - m.bottom, stroke: "var(--axis)", "stroke-width": 1 }));
-  root.append(svg("text", { x: x(tNow) + 4, y: m.top + 10, fill: "var(--text-secondary)", "font-size": 12 }, "nu"));
-
-  // steun / weerstand
-  for (const l of levels) {
-    root.append(svg("line", { x1: m.left, x2: W - m.right, y1: y(l.v), y2: y(l.v), stroke: "var(--text-secondary)", "stroke-width": 1, opacity: .5 }));
-    root.append(svg("text", { x: m.left + 4, y: y(l.v) - 4, fill: "var(--text-secondary)", "font-size": 11,
-      stroke: "var(--surface-1)", "stroke-width": 3, "paint-order": "stroke" }, `${l.name} ${usd(l.v)}`));
-  }
-
-  // banden
-  const band = (kLo, kHi, op) => {
-    const pts = fc.map((d) => `${x(d.t)},${y(d[kHi])}`).concat(fc.slice().reverse().map((d) => `${x(d.t)},${y(d[kLo])}`));
-    root.append(svg("polygon", { points: pts.join(" "), fill: "var(--series-1)", opacity: op }));
-  };
-  band("p05", "p95", 0.12);
-  band("p25", "p75", 0.20);
-  root.append(svg("polyline", { points: fc.map((d) => `${x(d.t)},${y(d.p50)}`).join(" "), fill: "none",
-    stroke: "var(--series-1)", "stroke-width": 2, opacity: .6, "stroke-linejoin": "round", "stroke-linecap": "round" }));
-
-  // koerslijn
-  root.append(svg("polyline", { points: hist.map((d) => `${x(d.t)},${y(d.c)}`).join(" "), fill: "none",
-    stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
-  root.append(svg("circle", { cx: x(tNow), cy: y(last.c), r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }));
-
-  // directe labels rechts: p95 / p05 na 60 min
-  const end = fc[fc.length - 1];
-  for (const [k, txt] of [["p95", "95%"], ["p05", "5%"]]) {
-    root.append(svg("text", { x: x(end.t) + 6, y: y(end[k]), "dominant-baseline": "middle", fill: "var(--text-secondary)", "font-size": small ? 11 : 12 },
-      `${txt} ${usd(end[k])}`));
-  }
-
-  // hover-laag
-  const cross = svg("line", { y1: m.top, y2: H - m.bottom, stroke: "var(--text-secondary)", "stroke-width": 1, visibility: "hidden" });
-  const dot = svg("circle", { r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" });
-  root.append(cross, dot);
-  const points = hist.concat(fc.slice(1));
-  const hit = svg("rect", { x: m.left, y: m.top, width: W - m.left - m.right, height: H - m.top - m.bottom, fill: "transparent" });
-  root.append(hit);
-
-  host.replaceChildren(root);
-  chartState = { root, points, x, y, cross, dot, idx: points.length - 1 };
-
-  const show = (i, clientX, clientY) => {
-    chartState.idx = i;
-    const p = points[i];
-    const px = x(p.t), py = y(p.kind === "fc" ? p.p50 : p.c);
-    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
-    dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("visibility", "visible");
-    const tip = $("tip"); tip.replaceChildren();
-    const row = (label, val) => { const r = el("div", { class: "row" }); r.append(el("span", {}, label), el("b", {}, val)); tip.append(r); };
-    if (p.kind === "fc") {
-      tip.append(el("div", { class: "t" }, `Over ${p.bars * 5} min (${timeFmt.format(new Date(p.t))})`));
-      row("mediaan", usd(p.p50)); row("50% kans", `${usd(p.p25)} – ${usd(p.p75)}`); row("90% kans", `${usd(p.p05)} – ${usd(p.p95)}`);
-    } else {
-      tip.append(el("div", { class: "t" }, dateTimeFmt.format(new Date(p.t))));
-      row("slot", usd(p.c)); row("hoog / laag", `${usd(p.h)} / ${usd(p.l)}`);
-    }
-    tip.hidden = false;
-    const box = root.getBoundingClientRect();
-    const cx = clientX ?? box.left + (px / W) * box.width, cy = clientY ?? box.top + (py / H) * box.height;
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    tip.style.left = Math.min(window.innerWidth - tw - 8, Math.max(8, cx + 14)) + "px";
-    tip.style.top = Math.max(8, Math.min(window.innerHeight - th - 8, cy - th - 12)) + "px";
-  };
-  const hide = () => { cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); $("tip").hidden = true; };
-  const nearest = (clientX) => {
-    const box = root.getBoundingClientRect();
-    const sx = ((clientX - box.left) / box.width) * W;
-    let best = 0, bd = Infinity;
-    points.forEach((p, i) => { const dd = Math.abs(x(p.t) - sx); if (dd < bd) { bd = dd; best = i; } });
-    return best;
-  };
-  hit.addEventListener("pointermove", (e) => show(nearest(e.clientX), e.clientX, e.clientY));
-  hit.addEventListener("pointerleave", hide);
-  root.addEventListener("focus", () => show(chartState.idx));
-  root.addEventListener("blur", hide);
-  root.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      show(Math.max(0, Math.min(points.length - 1, chartState.idx + (e.key === "ArrowRight" ? 1 : -1))));
-    } else if (e.key === "Escape") hide();
-  });
-}
-
-// ------------------------------------------------------------------ tabellen
-function renderDist(a) {
-  const t = $("dist"); t.replaceChildren();
-  const head = el("tr");
-  ["Horizon", "5%", "25%", "mediaan", "75%", "95%"].forEach((h, i) => head.append(el("th", { class: i ? "num" : "" }, h)));
-  t.append(head);
-  for (const [k, h] of Object.entries(a.monte_carlo.horizons)) {
-    const r = el("tr");
-    r.append(el("td", {}, k.replace("m", " min")));
-    [h.p05, h.p25, h.p50, h.p75, h.p95].forEach((v) => r.append(el("td", { class: "num" }, usd(v))));
-    t.append(r);
-  }
-  const keys = Object.keys(a.monte_carlo.horizons), lastK = keys[keys.length - 1];
-  const tp = a.monte_carlo.horizons[lastK].touch_prob;
-  const parts = Object.entries(tp).map(([k, v]) => {
-    const m = k.match(/^(resistance|support)@(.+)$/);
-    const name = m ? `${m[1] === "resistance" ? "weerstand" : "steun"} ${usd(+m[2])}` : k;
-    return `${name}: ${pct(v, 0)}`;
-  });
-  $("touch").textContent = `Kans om binnen ${lastK.replace("m", " min")} te raken — ${parts.join(" · ")}`;
-}
-
-function renderTech(a) {
-  const s = a.snapshot, i = s.indicators, lv = s.levels;
-  const dl = $("tech"); dl.replaceChildren();
-  const add = (k, v) => dl.append(el("dt", {}, k), el("dd", {}, v));
-  add("Trend", `5m ${s.trend_5m}` + Object.entries(s.higher_timeframes).map(([k, v]) => ` · ${k.replace("min", "m")} ${v.trend}`).join(""));
-  add("RSI 14", NF(1).format(i.rsi14));
-  add("MACD-histogram", NF(2).format(i.macd_hist));
-  add("Bollinger %B", NF(2).format(i.bb_pctb));
-  add("ATR 14", `${usd(i.atr14)} (${NF(3).format(i.atr_pct_of_price)}%) · ${s.volatility_regime}`);
-  add("Dag-VWAP", usd(i.vwap));
-  add("EMA 9 / 21 / 50 / 200", [i.ema9, i.ema21, i.ema50, i.ema200].map(usd).join(" / "));
-  add("Weerstand", lv.resistance.map((v, k) => `${usd(v)} (${lv.resistance_touches[k]}×)`).join(", ") || "—");
-  add("Steun", lv.support.map((v, k) => `${usd(v)} (${lv.support_touches[k]}×)`).join(", ") || "—");
-  add("24u hoog / laag", `${usd(lv.high_24h)} / ${usd(lv.low_24h)}`);
-}
-
-function mark(ok, yes, no) {
-  const span = el("span", { class: ok ? "ok" : "no" }, ok ? `✓ ${yes}` : `✗ ${no}`);
-  return span;
-}
-
-function renderLearning(a) {
-  const L = a.learning || {}, c = L.calibration || {}, tr = L.track_record || {};
-  $("learnSub").textContent = tr.n_direction
-    ? `${tr.n_direction} voorspellingen getoetst sinds ${tr.since} (${tr.n_live} live, ${tr.n_replay} teruggespeeld met alleen de data van dat moment).`
-    : "Nog geen voorspellingen getoetst.";
-  const box = $("learnTiles"); box.replaceChildren();
-  if (tr.n_direction) tile(box, "Richting goed voorspeld", pct(tr.hit_rate), `stijgingen in die periode: ${pct(tr.share_up)}`);
-  if (tr.n_range) tile(box, "Koers binnen 90%-band", pct(tr.coverage_90, 0), "doel: 90%");
-  if (c.vol_scale) tile(box, "Geleerde bandbreedtefactor", `×${NF(2).format(c.vol_scale)}`, c.vol_scale > 1.02 ? "banden verbreed" : c.vol_scale < 0.98 ? "banden versmald" : "geen correctie nodig");
-  if (c.dir_scale !== undefined) tile(box, "Vertrouwen in richtingskans", NF(2).format(c.dir_scale), "0 = negeren · 1 = volledig");
-
-  const t = $("recent"); t.replaceChildren();
-  const rows = L.recent_live || [];
-  if (!rows.length) {
-    const r = el("tr"); r.append(el("td", {}, "Nog geen live voorspellingen met bekende uitkomst; die verschijnen na de eerste geplande runs."));
-    t.append(r); return;
-  }
-  const head = el("tr");
-  ["Tijd", "Prijs", "Kans hoger", "Uitkomst 15 min", "Prijs na 60 min", "Binnen 90%-band"].forEach((h, i) =>
-    head.append(el("th", { class: i === 1 || i === 2 || i === 4 ? "num" : "" }, h)));
-  t.append(head);
-  for (const r of rows) {
-    const tr2 = el("tr");
-    tr2.append(el("td", {}, dateTimeFmt.format(new Date(r.time))));
-    tr2.append(el("td", { class: "num" }, usd(r.price)));
-    tr2.append(el("td", { class: "num" }, pct(r.p_up)));
-    const out = el("td"); out.append(document.createTextNode(r.went_up ? "▲ hoger · " : "▼ lager · "), mark(r.correct, "goed", "fout")); tr2.append(out);
-    tr2.append(el("td", { class: "num" }, r.price_60m == null ? "—" : usd(r.price_60m)));
-    const ins = el("td"); if (r.inside_90 == null) ins.textContent = "—"; else ins.append(mark(r.inside_90, "ja", "nee")); tr2.append(ins);
-    t.append(tr2);
-  }
-}
-
-// ------------------------------------------------------------------ laden & verversen
-let lastGenerated = null, latest = null, candles = null;
-
-async function load() {
-  const bust = Date.now();
-  $("app").classList.add("loading");
-  try {
-    const a = await getJSON("latest.json", bust);
-    if (a.generated_at !== lastGenerated) {
-      candles = await getJSON("candles.json", bust);
-      latest = a; lastGenerated = a.generated_at;
-      render();
-      const agent = a.agent_summary;
-      $("agentCard").hidden = !agent;
-      if (agent) $("agent").textContent = agent;
-    }
-    const age = Math.round((Date.now() - new Date(latest.generated_at).getTime()) / 60000);
-    $("meta").textContent = `Laatste candle ${dateTimeFmt.format(new Date(latest.snapshot.time))} · berekend ${age} min geleden · bron ${(latest.source || "okx").toUpperCase()} · ververst automatisch`;
-    $("meta").classList.remove("error");
-  } catch (err) {
-    $("meta").textContent = `Kon de data niet laden (${err.message}). Nieuwe poging over een minuut.`;
-    $("meta").classList.add("error");
-  } finally {
-    $("app").classList.remove("loading");
-  }
-}
-
-function render() {
-  if (!latest) return;
-  renderTiles(latest);
-  renderChart(latest, candles);
-  renderDist(latest);
-  renderTech(latest);
-  renderLearning(latest);
-}
-
-let resizeTimer;
-window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => latest && renderChart(latest, candles), 150); });
-load();
-setInterval(load, 60000);
-</script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

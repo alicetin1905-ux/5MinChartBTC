@@ -165,3 +165,20 @@ def recent_live(ev: pd.DataFrame, n: int = 12) -> list[dict]:
             "inside_90": inside,
         })
     return rows
+
+
+def evaluated_rows(ev: pd.DataFrame, n: int = 400) -> list[dict]:
+    """Laatste `n` getoetste voorspellingen (live én replay) voor de grafieken op het dashboard."""
+    if ev.empty or "realized_60m" not in ev:
+        return []
+    cols = ["price", "p_up", "p_up_raw", "p05_60m", "p25_60m", "p50_60m", "p75_60m", "p95_60m",
+            "realized_dir", "realized_60m"]
+    r = ev.dropna(subset=["realized_60m", "p05_60m", "p95_60m"]).tail(n)
+    out = []
+    for _, row in r.iterrows():
+        d = {"t": row["candle_time"].isoformat(), "live": not str(row.get("source", "")).startswith("replay")}
+        for c in cols:
+            v = row.get(c)
+            d[c] = None if v is None or pd.isna(v) else round(float(v), 5 if c.startswith("p_up") else 2)
+        out.append(d)
+    return out

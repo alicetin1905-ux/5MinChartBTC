@@ -38,11 +38,35 @@ Actions `python -m btc5m run`. Daarna:
   - `history.csv`: één regel per run; volgende runs toetsen deze voorspellingen en leren ervan;
   - `learning.json`: het track record en de geleerde kalibratie.
 
-- staat er een **live dashboard** op GitHub Pages:
-  <https://alicetin1905-ux.github.io/5MinChartBTC/>. Je ziet er de grafiek met de verwachting voor
-  het komende uur, de kansverdeling, het technisch beeld en het track record. De pagina ververst
-  zichzelf elke minuut. Eenmalig instellen: Settings → Pages → *Deploy from a branch* →
-  `btc-reports` / `(root)`.
+- staat er een **interactief live dashboard** op GitHub Pages:
+  <https://alicetin1905-ux.github.io/5MinChartBTC/>. Eenmalig instellen: Settings → Pages →
+  *Deploy from a branch* → `btc-reports` / `(root)`.
+
+### Het dashboard
+
+Het dashboard haalt de koersen **rechtstreeks in je browser** binnen, van OKX: elke trade via
+een websocket. Alle berekeningen draaien zichtbaar mee in `site/engine.js`, met dezelfde formules
+als de Python-code. Een test (`tests/test_engine_parity.py`) controleert dat de uitkomsten
+gelijk zijn.
+
+- **Live candlestick-grafiek**: de lopende candle beweegt mee met elke trade. Je kunt EMA 9/21/50,
+  VWAP, Bollinger en steun/weerstand aan- en uitzetten, het bereik kiezen (3 tot 24 uur) en met de
+  muis of de pijltjestoetsen over de candles en de verwachting bewegen.
+- **Monte Carlo, live te zien**: je ziet tot 10.000 koerspaden uitwaaieren en het histogram van de
+  eindprijzen opbouwen, waarna de 50%- en 90%-banden verschijnen. Horizon, aantal paden en
+  volatiliteitsfactor stel je zelf in; de factor staat standaard op de geleerde waarde. De simulatie
+  draait opnieuw bij elke nieuwe candle.
+- **Richtingsmodel open en bloot**: per feature zie je hoeveel die de kans omhoog of omlaag duwt.
+  Daaronder staan de som en de sigmoïde, en hoe dat via de geleerde vertrouwensfactor de
+  eindkans geeft. Dit wordt bij elke tick herberekend.
+- **Indicatoren live**: RSI-meter, MACD-histogram, Bollinger %B, volatiliteit en de scorekaart.
+  Een stem die omslaat, licht even op.
+- **Live transacties**: elke trade verschijnt meteen.
+- **Zelflerend**: voorspelde banden naast de werkelijke uitkomsten, een kalibratiegrafiek, en wat
+  het systeem daarvan geleerd heeft.
+
+Kan de websocket geen verbinding maken, dan valt het dashboard terug op REST (elke 3 seconden).
+Met `?demo=1` achter de URL zie je een gesimuleerde feed.
 
 Je kunt een run ook met de hand starten: Actions → *BTC 5m analyse* → **Run workflow**.
 

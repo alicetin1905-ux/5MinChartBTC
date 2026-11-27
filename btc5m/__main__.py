@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         history = load_history(Path(args.history))
     result = analyse(df, horizons=horizons, model_horizon=args.model_horizon,
                      derivatives=deriv, backtest=not args.no_backtest, history=history)
+    result.pop("extras", None)  # modelparameters/z-sample alleen voor het dashboard
     text = json.dumps(result, indent=2, ensure_ascii=False) if args.json else to_markdown(result)
     print(text)
     if args.out:

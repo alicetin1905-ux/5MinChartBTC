@@ -51,7 +51,8 @@ def monte_carlo(df: pd.DataFrame, horizons=(1, 3, 6, 12), n_paths: int = 20000,
     hi = np.maximum.accumulate(paths, axis=1)
     lo = np.minimum.accumulate(paths, axis=1)
 
-    out = {"price": s0, "sigma_5m_pct": float(np.sqrt(var) * 100), "vol_scale": vol_scale, "horizons": {}}
+    out = {"price": s0, "sigma_5m_pct": float(np.sqrt(var) * 100), "vol_scale": vol_scale, "horizons": {},
+           "z_sample": np.round(rng.choice(z, size=min(1500, len(z)), replace=False), 3).tolist()}
     for h in horizons:
         end = paths[:, h]
         q = np.percentile(end, [5, 25, 50, 75, 95])
@@ -135,6 +136,7 @@ class DirectionModel:
         sd[sd == 0] = 1
         w = _fit_logit((X_tr - mu) / sd, y_tr, self.l2)
         Xb = np.column_stack([np.ones(len(X_te)), (X_te - mu) / sd])
+        self.last_params = {"mu": mu, "sd": sd, "w": w}
         return 1 / (1 + np.exp(-Xb @ w)), w
 
     @staticmethod
@@ -152,9 +154,13 @@ class DirectionModel:
         p, w = self._train_predict(X_tr, y_tr, f.iloc[[-1]].to_numpy())
         coefs = dict(zip(FEATURES, w[1:]))
         top = sorted(coefs.items(), key=lambda kv: -abs(kv[1]))[:5]
+        prm = self.last_params
         return {"horizon_bars": self.horizon, "horizon_min": self.horizon * 5,
                 "p_up": float(p[0]), "train_samples": int(len(idx)), "base_rate_up": float(y_tr.mean()),
-                "top_features": {k: float(v) for k, v in top}}
+                "top_features": {k: float(v) for k, v in top},
+                # volledige modelparameters, zodat het dashboard de kans live kan herberekenen
+                "params": {"features": FEATURES, "mu": prm["mu"].tolist(), "sd": prm["sd"].tolist(),
+                           "w": prm["w"].tolist(), "x_now": f.iloc[-1].tolist()}}
 
     def walk_forward(self, df: pd.DataFrame, train_window: int | None = None, step: int = 50,
                      fee_roundtrip_pct: float = 0.05, threshold: float = 0.55) -> dict:

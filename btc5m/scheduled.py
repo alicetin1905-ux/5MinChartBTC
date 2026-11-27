@@ -2,7 +2,8 @@
 
 Schrijft naar `outdir`:
 - latest.json / latest.md  : volledige analyse van deze run
-- candles.json             : laatste 24 uur aan 5m candles (voor het dashboard)
+- candles.json             : laatste 800 5m candles (het dashboard rekent hier live op verder)
+- model.json / evaluated.json : modelparameters en getoetste voorspellingen voor het dashboard
 - agent.md                 : Claude-interpretatie (als ingeschakeld en gelukt)
 - history.csv              : één regel per run; volgende runs toetsen deze voorspellingen en
                              leren daarvan (zie learn.py)
@@ -97,10 +98,13 @@ def run_once(outdir: str, sources: list[str], bars: int = 8640, agent: str = "au
         history.to_csv(hist, index=False)
     a = analyse(df, derivatives=fetch_derivatives_context(source), history=history)
     a["source"] = source
+    extras = a.pop("extras")
+    (out / "model.json").write_text(json.dumps(extras["model"]), encoding="utf-8")
+    (out / "evaluated.json").write_text(json.dumps(extras["evaluated"]), encoding="utf-8")
     md = to_markdown(a)
     (out / "latest.md").write_text(md, encoding="utf-8")
 
-    recent = df.tail(288)  # laatste 24 uur voor de grafiek op het dashboard
+    recent = df.tail(800)  # ruim 2,5 dag: genoeg om EMA200/1u-trend in de browser opnieuw te berekenen
     candles = [[int(t.timestamp() * 1000), *(round(float(x), 2) for x in row)]
                for t, row in zip(recent.index, recent[["open", "high", "low", "close", "volume"]].to_numpy())]
     (out / "candles.json").write_text(json.dumps(candles), encoding="utf-8")

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from .forecast import DirectionModel, model_verdict, monte_carlo
-from .learn import apply_dir_scale, calibrate, evaluate_history, recent_live, track_record
+from .forecast import LAMBDA, DirectionModel, model_verdict, monte_carlo
+from .learn import apply_dir_scale, calibrate, evaluate_history, evaluated_rows, recent_live, track_record
 from .signals import snapshot
 
 DISCLAIMER = ("Dit is een statistische analyse, geen financieel advies. 5-minuten bewegingen van BTC "
@@ -29,7 +29,18 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
     now = model.predict_now(df)
     now["p_up_raw"] = now["p_up"]
     now["p_up"] = apply_dir_scale(now["p_up_raw"], cal["dir_scale"])
+    # Grote/technische onderdelen apart, zodat rapport en Claude-invoer compact blijven
+    extras = {
+        "model": {
+            "lambda": LAMBDA, "horizon_bars": model_horizon,
+            "vol_scale": cal["vol_scale"], "dir_scale": cal["dir_scale"],
+            "z_sample": mc.pop("z_sample"), "direction": now.pop("params"),
+            "generated_from": df.index[-1].isoformat(),
+        },
+        "evaluated": evaluated_rows(ev),
+    }
     return {
+        "extras": extras,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "candles": len(df),
         "data_from": df.index[0].isoformat(),

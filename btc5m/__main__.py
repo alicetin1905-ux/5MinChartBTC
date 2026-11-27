@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--no-backtest", action="store_true", help="Sla walk-forward backtest over (sneller)")
     a.add_argument("--json", action="store_true", help="Geef JSON i.p.v. Markdown")
     a.add_argument("--out", help="Schrijf het resultaat ook naar dit bestand")
+    a.add_argument("--history", help="history.csv van eerdere runs: toetsen en daarvan leren")
 
     f = sub.add_parser("fetch", help="Sla candles op als CSV")
     f.add_argument("--source", choices=["okx", "binance"], default="okx")
@@ -33,15 +34,17 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("run", help="Eén geplande run: analyse, rapporten en geschiedenis bijwerken")
     r.add_argument("--outdir", default="reports")
     r.add_argument("--sources", default="okx,binance", help="Bronnen in volgorde van voorkeur")
-    r.add_argument("--bars", type=int, default=3000)
+    r.add_argument("--bars", type=int, default=8640, help="Standaard 8640 ≈ 30 dagen (meer leerdata)")
     r.add_argument("--agent", choices=["auto", "on", "off"], default="auto",
                    help="Claude-samenvatting: auto = alleen als ANTHROPIC_API_KEY gezet is")
+    r.add_argument("--backfill-days", type=int, default=14,
+                   help="Bij een (bijna) lege history.csv eerst zoveel dagen terugspelen (0 = uit)")
 
     args = p.parse_args(argv)
 
     if args.cmd == "run":
         from .scheduled import run_once
-        return run_once(args.outdir, args.sources.split(","), args.bars, args.agent)
+        return run_once(args.outdir, args.sources.split(","), args.bars, args.agent, args.backfill_days)
 
     if args.cmd == "fetch":
         df = fetch_candles(args.bars, args.source)
@@ -56,8 +59,12 @@ def main(argv: list[str] | None = None) -> int:
         df = fetch_candles(args.bars, args.source)
         deriv = fetch_derivatives_context(args.source)
     horizons = tuple(int(x) for x in args.horizons.split(","))
+    history = None
+    if args.history:
+        from .scheduled import load_history
+        history = load_history(Path(args.history))
     result = analyse(df, horizons=horizons, model_horizon=args.model_horizon,
-                     derivatives=deriv, backtest=not args.no_backtest)
+                     derivatives=deriv, backtest=not args.no_backtest, history=history)
     text = json.dumps(result, indent=2, ensure_ascii=False) if args.json else to_markdown(result)
     print(text)
     if args.out:

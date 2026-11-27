@@ -21,7 +21,10 @@ Dit is het betrouwbaarste onderdeel.
 5. Richting: de kans uit het richtingsmodel, afgewogen tegen de walk-forward backtest (`backtest`, `model_verdict`). \
 Is de trefzekerheid niet duidelijk hoger dan `baseline_best` of de Brier-score >= 0.25, zeg dan expliciet dat de \
 richtingskans niet betrouwbaar is.
-6. Twee of drie scenario's (bullish / bearish / zijwaarts) met concrete prijsniveaus uit de data en wat elk scenario \
+6. Track record: vat `learning` samen - hoe goed klopten eerdere voorspellingen (trefzekerheid, Brier, \
+dekking van de 90%-band) en wat heeft het systeem daarvan geleerd (vol_scale, dir_scale). Vermeld het verschil \
+tussen live en teruggespeelde (replay) voorspellingen.
+7. Twee of drie scenario's (bullish / bearish / zijwaarts) met concrete prijsniveaus uit de data en wat elk scenario \
 zou bevestigen of ontkrachten.
 
 Regels: geef kansen en bandbreedtes, nooit zekerheden. Gebruik alleen cijfers uit de JSON en rond prijzen af op hele \

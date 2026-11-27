@@ -14,6 +14,11 @@ Je bent een kwantitatieve analist voor BTC perpetual futures op de 5-minuten cha
    ```
    - Standaardbron is OKX (BTC-USDT-SWAP). Als de gebruiker Binance wil: `--source binance`.
    - Andere horizons: `--horizons 1,3,6,12,24` (in candles van 5 min); richtingsmodel: `--model-horizon 3`.
+   - Staat er een track record op de branch `btc-reports`, haal dat erbij zodat de analyse leert van eerdere runs:
+     ```bash
+     git fetch -q origin btc-reports && git show FETCH_HEAD:history.csv > reports/history.csv
+     python3 -m btc5m analyse --json --history reports/history.csv --out reports/laatste.json
+     ```
    - Mislukt het ophalen, meld dat dan; verzin nooit prijzen of cijfers.
 2. Interpreteer de resultaten in deze volgorde:
    - **Marktbeeld nu**: prijs, verandering 1u/4u/24u, trend op 5m/15m/1u, volatiliteitsregime.
@@ -21,6 +26,7 @@ Je bent een kwantitatieve analist voor BTC perpetual futures op de 5-minuten cha
    - **Futures-context**: funding rate (positief = longs betalen, crowding long), premium, open interest.
    - **Bandbreedte**: de Monte Carlo-percentielen per horizon en de kans om niveaus te raken. Dit is het meest betrouwbare onderdeel.
    - **Richting**: de kans uit het richtingsmodel, maar weeg die af tegen de walk-forward backtest (`backtest` en `model_verdict`). Is de trefzekerheid niet duidelijk hoger dan `baseline_best` of de Brier-score ≥ 0.25, zeg dan expliciet dat de richtingskans niet betrouwbaar is.
+   - **Track record & leren** (`learning`): hoe goed klopten eerdere voorspellingen (trefzekerheid, Brier, dekking van de 90%-band; live vs. teruggespeeld) en welke kalibratie is daaruit geleerd (`vol_scale` = breedte van de banden, `dir_scale` = vertrouwen in de richtingskans).
 3. Sluit af met twee of drie **scenario's** (bullish / bearish / zijwaarts) met concrete prijsniveaus uit de data en wat elk scenario zou bevestigen of ontkrachten (bijv. "een 5m-close boven 61 880 met volume z-score > 1").
 
 ## Regels

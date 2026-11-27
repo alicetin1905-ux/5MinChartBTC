@@ -28,7 +28,9 @@ def ewma_sigma(logret: pd.Series, lam: float = LAMBDA) -> pd.Series:
 
 
 def monte_carlo(df: pd.DataFrame, horizons=(1, 3, 6, 12), n_paths: int = 20000,
-                touch_pct=(0.25, 0.5, 1.0), levels: dict | None = None, seed: int = 7) -> dict:
+                touch_pct=(0.25, 0.5, 1.0), levels: dict | None = None, seed: int = 7,
+                vol_scale: float = 1.0) -> dict:
+    """`vol_scale` is de geleerde kalibratiefactor (zie learn.py): >1 = bredere banden."""
     close = df["close"]
     r = np.log(close).diff().dropna()
     sigma = ewma_sigma(r)
@@ -38,7 +40,7 @@ def monte_carlo(df: pd.DataFrame, horizons=(1, 3, 6, 12), n_paths: int = 20000,
     rng = np.random.default_rng(seed)
     H = max(horizons)
     s0 = float(close.iloc[-1])
-    var = float(sigma.iloc[-1]) ** 2
+    var = float(sigma.iloc[-1]) ** 2 * vol_scale ** 2
     var_t = np.full(n_paths, var)
     logp = np.zeros((n_paths, H + 1))
     for t in range(1, H + 1):
@@ -49,7 +51,7 @@ def monte_carlo(df: pd.DataFrame, horizons=(1, 3, 6, 12), n_paths: int = 20000,
     hi = np.maximum.accumulate(paths, axis=1)
     lo = np.minimum.accumulate(paths, axis=1)
 
-    out = {"price": s0, "sigma_5m_pct": float(np.sqrt(var) * 100), "horizons": {}}
+    out = {"price": s0, "sigma_5m_pct": float(np.sqrt(var) * 100), "vol_scale": vol_scale, "horizons": {}}
     for h in horizons:
         end = paths[:, h]
         q = np.percentile(end, [5, 25, 50, 75, 95])
@@ -135,7 +137,12 @@ class DirectionModel:
         Xb = np.column_stack([np.ones(len(X_te)), (X_te - mu) / sd])
         return 1 / (1 + np.exp(-Xb @ w)), w
 
-    def predict_now(self, df: pd.DataFrame, train_window: int = 1500) -> dict:
+    @staticmethod
+    def default_window(n: int) -> int:
+        return int(min(3000, max(500, n // 2)))
+
+    def predict_now(self, df: pd.DataFrame, train_window: int | None = None) -> dict:
+        train_window = train_window or self.default_window(len(df))
         f, fwd = self._dataset(df)
         valid = f.notna().all(axis=1)
         train = valid & fwd.notna()
@@ -149,12 +156,13 @@ class DirectionModel:
                 "p_up": float(p[0]), "train_samples": int(len(idx)), "base_rate_up": float(y_tr.mean()),
                 "top_features": {k: float(v) for k, v in top}}
 
-    def walk_forward(self, df: pd.DataFrame, train_window: int = 1000, step: int = 50,
+    def walk_forward(self, df: pd.DataFrame, train_window: int | None = None, step: int = 50,
                      fee_roundtrip_pct: float = 0.05, threshold: float = 0.55) -> dict:
         """Out-of-sample test: train op verleden, voorspel de volgende `step` candles, schuif door.
 
         Labels die (deels) na het voorspelmoment liggen worden nooit in training gebruikt.
         """
+        train_window = train_window or self.default_window(len(df))
         f, fwd = self._dataset(df)
         X = f.to_numpy()
         y = fwd.to_numpy()
@@ -177,6 +185,7 @@ class DirectionModel:
         p = np.concatenate(probs)
         r = np.concatenate(rets)
         up = (r > 0).astype(float)
+        self.last_oos = (p, up)  # voor kalibratie in learn.py
         pred = (p > 0.5).astype(float)
         conf = (p >= threshold) | (p <= 1 - threshold)
         # Niet-overlappende trades (elke h candles) voor een eerlijke rendementsschatting

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .forecast import DirectionModel, model_verdict, monte_carlo
+from .learn import apply_dir_scale, calibrate, evaluate_history, track_record
 from .signals import snapshot
 
 DISCLAIMER = ("Dit is een statistische analyse, geen financieel advies. 5-minuten bewegingen van BTC "
@@ -14,14 +15,20 @@ DISCLAIMER = ("Dit is een statistische analyse, geen financieel advies. 5-minute
 
 
 def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
-            derivatives: dict | None = None, backtest: bool = True) -> dict:
+            derivatives: dict | None = None, backtest: bool = True,
+            history: pd.DataFrame | None = None) -> dict:
+    """`history` = eerdere voorspellingen (history.csv); daaruit leert de analyse bij."""
     if len(df) < 400:
         raise ValueError(f"Minstens 400 candles nodig, kreeg {len(df)}")
     snap = snapshot(df)
-    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"])
     model = DirectionModel(horizon=model_horizon)
-    now = model.predict_now(df)
     bt = model.walk_forward(df) if backtest else {}
+    ev = evaluate_history(history if history is not None else pd.DataFrame(), df)
+    cal = calibrate(df, ev, getattr(model, "last_oos", None))
+    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"], vol_scale=cal["vol_scale"])
+    now = model.predict_now(df)
+    now["p_up_raw"] = now["p_up"]
+    now["p_up"] = apply_dir_scale(now["p_up_raw"], cal["dir_scale"])
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "candles": len(df),
@@ -33,6 +40,7 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
         "direction_model": now,
         "backtest": bt,
         "model_verdict": model_verdict(bt) if backtest else "niet getest",
+        "learning": {"calibration": cal, "track_record": track_record(ev)},
         "disclaimer": DISCLAIMER,
     }
 
@@ -78,7 +86,8 @@ def to_markdown(a: dict) -> str:
         L.append(f"- Open interest: {_f(d['open_interest_btc'], 0)} BTC (≈ ${d['open_interest_usd'] / 1e9:.2f} mld)\n")
 
     L.append("## Kansverdeling komende candles (Monte Carlo, drift-neutraal)")
-    L.append(f"Huidige 5m-volatiliteit (EWMA): {mc['sigma_5m_pct']:.3f}% per candle.\n")
+    L.append(f"Huidige 5m-volatiliteit (EWMA, geleerde factor ×{mc['vol_scale']:.2f}): "
+             f"{mc['sigma_5m_pct']:.3f}% per candle.\n")
     L.append("| Horizon | 5% | 25% | mediaan | 75% | 95% | gem. beweging |")
     L.append("|---|---|---|---|---|---|---|")
     for k, h in mc["horizons"].items():
@@ -90,7 +99,8 @@ def to_markdown(a: dict) -> str:
 
     L.append(f"## Richtingsmodel ({dm['horizon_min']} min vooruit)")
     L.append(f"- Kans op hogere close over {dm['horizon_min']} min: **{dm['p_up']:.1%}** "
-             f"(basisratio in trainingsdata {dm['base_rate_up']:.1%}, n={dm['train_samples']})")
+             f"(ruw model {dm['p_up_raw']:.1%}, na kalibratie; basisratio {dm['base_rate_up']:.1%}, "
+             f"n={dm['train_samples']})")
     L.append("- Zwaarste features: " + ", ".join(f"{k} ({v:+.2f})" for k, v in dm["top_features"].items()))
     if bt and "error" not in bt:
         ca = bt["confident_accuracy"]
@@ -104,6 +114,26 @@ def to_markdown(a: dict) -> str:
     elif bt:
         L.append(f"- Backtest: {bt['error']}")
     L.append(f"- **Oordeel:** {a['model_verdict']}\n")
+
+    lr = a.get("learning")
+    if lr:
+        c, tr = lr["calibration"], lr["track_record"]
+        L.append("## Zelflerend: eigen track record & kalibratie")
+        if tr.get("n_direction"):
+            L.append(f"- Eigen richtingsvoorspellingen (sinds {tr['since']}, {tr['n_live']} live + "
+                     f"{tr['n_replay']} teruggespeeld): {tr['n_direction']} getoetst, "
+                     f"trefzekerheid {tr['hit_rate']:.1%} (aandeel stijgingen {tr['share_up']:.1%}); "
+                     f"Brier ruw {tr['brier_raw']:.4f} → gekalibreerd {tr['brier_calibrated']:.4f} (muntworp 0.25)")
+        else:
+            L.append("- Nog geen eigen voorspellingen getoetst; kalibratie leunt op de backtest en de candles.")
+        if tr.get("n_range"):
+            cov50 = f", 50%-band {tr['coverage_50']:.0%} (doel 50%)" if "coverage_50" in tr else ""
+            L.append(f"- Bandbreedte 60m getoetst op {tr['n_range']} voorspellingen: 90%-band raak in "
+                     f"{tr['coverage_90']:.0%} (doel 90%){cov50}")
+        hist = c["vol_scale_from_history"]
+        L.append(f"- Geleerde volatiliteitsfactor: ×{c['vol_scale']:.2f} (candles ×{c['vol_scale_from_candles']:.2f}"
+                 + (f", eigen track record ×{hist:.2f} op n={c['n_history_range']}" if hist else "") + ")")
+        L.append(f"- Vertrouwen in richtingsmodel: {c['dir_scale']:.2f} (0 = negeren, 1 = ruwe kans klopt)\n")
 
     L.append(f"_Data: {a['candles']} candles, {a['data_from'][:16]} → {a['data_to'][:16]} UTC. {a['disclaimer']}_")
     return "\n".join(L)

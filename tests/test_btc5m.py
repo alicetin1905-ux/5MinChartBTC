@@ -68,3 +68,52 @@ def test_full_report_renders():
 def test_too_little_data():
     with pytest.raises(ValueError):
         analyse(synthetic(100))
+
+
+# ---------------------------------------------------------------- zelflerend deel
+
+from btc5m.learn import dir_scale_fit, evaluate_history, track_record, vol_scale_from_history  # noqa: E402
+from btc5m.scheduled import HISTORY_FIELDS, load_history, replay_history  # noqa: E402
+
+
+def test_dir_scale_zero_for_useless_model_and_one_for_good_model():
+    rng = np.random.default_rng(3)
+    p = rng.uniform(0.3, 0.7, 20000)
+    assert dir_scale_fit(p, rng.random(20000) < 0.5) < 0.1          # kansen zeggen niets
+    assert dir_scale_fit(p, rng.random(20000) < p) > 0.85            # kansen kloppen
+
+
+def test_vol_scale_learns_when_bands_too_narrow():
+    rng = np.random.default_rng(4)
+    n = 500
+    price = np.full(n, 100.0)
+    # band ±1% (90%), maar werkelijke bewegingen zijn twee keer zo groot
+    realized = 100 * np.exp(rng.normal(0, 2 * 0.01 / 1.6449, n))
+    ev = pd.DataFrame({"price": price, "p05_60m": 99.0, "p50_60m": 100.0, "p95_60m": 101.0,
+                       "vol_scale": 1.0, "realized_60m": realized})
+    k, cnt = vol_scale_from_history(ev)
+    assert cnt == n and 1.7 < k <= 1.8
+
+
+def test_replay_and_evaluation_on_synthetic_data():
+    df = synthetic(3400)
+    hist = replay_history(df, days=1, every=6, lookback=3000)
+    assert len(hist) > 30 and hist["source"].str.startswith("replay").all()
+    ev = evaluate_history(hist, df)
+    tr = track_record(ev)
+    assert tr["n_direction"] > 20 and 0.6 < tr["coverage_90"] <= 1.0
+
+
+def test_old_history_is_migrated(tmp_path):
+    f = tmp_path / "history.csv"
+    f.write_text("generated_at,candle_time,source,price,p_up\n2026-01-01,2026-01-01T00:00:00Z,okx,1,0.5\n")
+    h = load_history(f)
+    assert list(h.columns) == HISTORY_FIELDS and len(h) == 1
+
+
+def test_analyse_with_history_reports_track_record():
+    df = synthetic(3400)
+    hist = replay_history(df.iloc[:-50], days=1, every=6, lookback=3000)
+    a = analyse(df, history=hist)
+    assert a["learning"]["track_record"]["n_direction"] > 0
+    assert "Zelflerend" in to_markdown(a)

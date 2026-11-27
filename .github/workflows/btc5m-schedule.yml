@@ -18,7 +18,7 @@ env:
 jobs:
   analyse:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15  # eerste run speelt 14 dagen terug (~2 min)
     steps:
       - uses: actions/checkout@v4
 

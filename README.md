@@ -35,7 +35,8 @@ Actions `python -m btc5m run`. Daarna:
 - komen de rapporten op de aparte branch **`btc-reports`**:
   - `latest.md` en `latest.json`: de meest recente analyse;
   - `agent.md`: de interpretatie door Claude (alleen als die is ingeschakeld, zie hieronder);
-  - `history.csv`: één regel per run, zodat je de voorspellingen later kunt toetsen.
+  - `history.csv`: één regel per run; volgende runs toetsen deze voorspellingen en leren ervan;
+  - `learning.json`: het track record en de geleerde kalibratie.
 
 Je kunt een run ook met de hand starten: Actions → *BTC 5m analyse* → **Run workflow**.
 
@@ -47,6 +48,26 @@ API-tegoed voor 96 runs per dag. Zonder het secret draait alleen de gratis cijfe
 
 Liever lokaal? Zet in je crontab:
 `*/15 * * * * cd /pad/naar/5MinChartBTC && python3 -m btc5m run --outdir reports`
+
+## Zelflerend
+
+Bij elke run toetst de agent zijn **eigen eerdere voorspellingen** uit `history.csv` aan wat er
+daarna echt gebeurde, en past zich daarop aan (`btc5m/learn.py`):
+
+| Wat | Hoe hij leert | Effect |
+|---|---|---|
+| **Bandbreedte** (`vol_scale`) | Hoe vaak viel de prijs na 60 min echt binnen de 90%-band? Te vaak erbuiten: banden breder. Te vaak erbinnen: smaller. | Kansranges kloppen beter met de werkelijkheid |
+| **Vertrouwen in de richting** (`dir_scale`) | Hoe goed voorspelden eerdere kansen de echte richting (backtest + eigen track record)? | De ruwe kans wordt naar 50% getrokken als het model weinig voorspelt; 0 = negeren, 1 = volledig vertrouwen |
+| **Model** | Wordt elke run opnieuw getraind op de nieuwste ~30 dagen candles | Past zich aan nieuwe marktomstandigheden aan |
+
+Bij de eerste run (lege `history.csv`) speelt hij de afgelopen 14 dagen terug, elke 15 minuten
+en telkens alleen met de data die op dat moment bekend was. Zo heeft hij meteen een track record.
+Die teruggespeelde voorspellingen worden apart geteld van de echte live voorspellingen.
+De uitkomst van elke run staat in `learning.json` en in de sectie *Zelflerend* van het rapport.
+
+Leren betekent hier **eerlijker worden over onzekerheid**, niet dat hij gaandeweg de koers
+beter gaat voorspellen. Als de richting in de data toeval is, leert hij die richtingskans juist
+minder zwaar te laten wegen.
 
 ## Wat er berekend wordt
 

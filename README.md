@@ -54,7 +54,7 @@ gelijk zijn.
   muis of de pijltjestoetsen over de candles en de verwachting bewegen.
 - **Monte Carlo, live te zien**: je ziet tot 10.000 koerspaden uitwaaieren en het histogram van de
   eindprijzen opbouwen, waarna de 50%- en 90%-banden verschijnen. Horizon, aantal paden en
-  volatiliteitsfactor stel je zelf in; de factor staat standaard op de geleerde waarde. De simulatie
+  een extra volatiliteitsfactor (wat-als) stel je zelf in, bovenop de geleerde kalibratie. De simulatie
   draait opnieuw bij elke nieuwe candle.
 - **Richtingsmodel open en bloot**: per feature zie je hoeveel die de kans omhoog of omlaag duwt.
   Daaronder staan de som en de sigmoïde, en hoe dat via de geleerde vertrouwensfactor de
@@ -86,18 +86,25 @@ daarna echt gebeurde, en past zich daarop aan (`btc5m/learn.py`):
 
 | Wat | Hoe hij leert | Effect |
 |---|---|---|
-| **Bandbreedte** (`vol_scale`) | Hoe vaak viel de prijs na 60 min echt binnen de 90%-band? Te vaak erbuiten: banden breder. Te vaak erbinnen: smaller. | Kansranges kloppen beter met de werkelijkheid |
-| **Vertrouwen in de richting** (`dir_scale`) | Hoe goed voorspelden eerdere kansen de echte richting (backtest + eigen track record)? | De ruwe kans wordt naar 50% getrokken als het model weinig voorspelt; 0 = negeren, 1 = volledig vertrouwen |
-| **Model** | Wordt elke run opnieuw getraind op de nieuwste ~30 dagen candles | Past zich aan nieuwe marktomstandigheden aan |
+| **Kalibratie per band** (`c50`, `c90` → `k50`, `k90`) | Hoe ver lag de koers na 60 min werkelijk van de mediaan, gemeten in de voorspelde volatiliteit? Dit wordt apart bepaald voor de 50%- en de 90%-band, eerst uit 30 dagen candles en daarna steeds meer uit het eigen track record. | BTC heeft dikke staarten: meestal rustig, af en toe een sprong. Daarom worden de banden apart gerekt of gekrompen, zodat beide kloppen |
+| **Volatiliteit per uur** | Variantie per uur van de dag, apart voor werkdag en weekend (met krimp naar het gemiddelde) | Banden zijn breder rond de Amerikaanse opening (13–15 uur UTC, ongeveer ×1,5) en smaller 's nachts en in het weekend (ongeveer ×0,85) |
+| **Vertrouwen in de richting** (`dir_scale`) | Hoe goed voorspelden eerdere kansen de echte richting (backtest + eigen track record)? | De ruwe kans wordt naar 50% getrokken als het model weinig voorspelt |
+| **Orderflow** | Elke run slaat de verhouding agressieve kopers/verkopers, open interest, de long/short-verhouding en een momentopname van het orderboek op (`orderflow.csv`, `book.csv`). OKX bewaart die data zelf maar 8 tot 48 uur. | Na ongeveer 7 dagen volgt automatisch een eerlijke walk-forward test: voegt orderflow iets toe aan het richtingsmodel? |
+| **Model** | Wordt elke run opnieuw getraind op de nieuwste ~30 dagen | Past zich aan nieuwe marktomstandigheden aan |
 
-Bij de eerste run (lege `history.csv`) speelt hij de afgelopen 14 dagen terug, elke 15 minuten
-en telkens alleen met de data die op dat moment bekend was. Zo heeft hij meteen een track record.
-Die teruggespeelde voorspellingen worden apart geteld van de echte live voorspellingen.
-De uitkomst van elke run staat in `learning.json` en in de sectie *Zelflerend* van het rapport.
+**Getoetst op 60 dagen data, op 360 momenten die buiten de schattingsperiode vielen:**
 
-Leren betekent hier **eerlijker worden over onzekerheid**, niet dat hij gaandeweg de koers
-beter gaat voorspellen. Als de richting in de data toeval is, leert hij die richtingskans juist
-minder zwaar te laten wegen.
+| | 50%-band raak | 90%-band raak | gemiddelde breedte 90%-band |
+|---|---|---|---|
+| oud | 55,0% | 88,3% | 1,57% |
+| nieuw (kalibratie per band + seizoen) | 52,2% | 89,2% | 1,54% |
+
+De volatiliteit per uur verbeterde daarnaast de log-likelihood van de 60m-bewegingen
+van 3,757 naar 3,805.
+
+Bij de eerste run speelt hij de afgelopen 14 dagen terug, zodat hij meteen een track record
+heeft. Leren betekent hier vooral **eerlijker worden over onzekerheid**, niet dat hij de
+richting gaandeweg beter gaat voorspellen.
 
 ## Wat er berekend wordt
 

@@ -38,7 +38,7 @@ const S = {
   candles: [], model: null, latest: null, evaluated: [],
   ind: null, feat: null, dir: null, sc: null, levels: null, closedIdx: -1,
   view: 72, H: 12, nPaths: 2000, volScale: 1, evalMode: "all",
-  overlays: { ema9: true, ema21: true, ema50: false, vwap: true, bb: false, levels: true },
+  overlays: { ema9: true, ema21: true, ema50: false, vwap: true, bb: false, levels: true, dots: true },
   sim: null, bands: null, anim: null, hover: null, dirty: true,
   price: null, conn: "connecting", demo: new URLSearchParams(location.search).has("demo"),
   tapeQueue: [], trades: 0, deriv: null, needsRecompute: true,
@@ -227,7 +227,9 @@ function runSimulation(animated) {
   const s0 = S.candles[S.candles.length - 1].c;
   const sigma = S.ind.sigma[S.closedIdx];
   const sim = E.simulate({ s0, sigma, volScale: S.volScale, z: zSample(), H: S.H, nPaths: S.nPaths, seed: (Date.now() / 1000) | 0 });
+  sim.sigEff = sigma * S.volScale;
   const bands = E.bands(sim);
+  if (animated) burstParticles();
   if (!animated || reduceMotion) {
     S.sim = sim; S.bands = bands; S.anim = null; S.dirty = true;
     renderMC(1); renderDist();
@@ -305,11 +307,14 @@ function layout() {
   const plotB = H - m.bottom - volH - 8;
   const c = S.candles, n = c.length;
   const start = Math.max(0, n - S.view);
-  const fut = S.H + 1;
-  const slots = n - start + fut;
-  const slotW = (W - m.left - m.right) / slots;
-  return { W, H, m, volH, plotB, start, n, fut, slots, slotW, small,
-    xs: (i) => m.left + (i - start + 0.5) * slotW };
+  // het verwachtingsgebied krijgt een vast deel van de breedte, zodat de dots ruimte hebben
+  const plotW = W - m.left - m.right;
+  const futW = plotW * (small ? 0.36 : 0.3);
+  const slotW = (plotW - futW) / (n - start);
+  const fw = futW / (S.H + 0.6);
+  const xs = (i) => m.left + (i - start + 0.5) * slotW;
+  return { W, H, m, volH, plotB, start, n, slotW, fw, small, xs,
+    xNow: xs(n - 1) + slotW / 2, xf: (step) => xs(n - 1) + step * fw };
 }
 
 function drawChart(now) {
@@ -405,7 +410,7 @@ function drawChart(now) {
   for (const k of ["ema50", "ema21", "ema9", "vwap"]) if (S.overlays[k]) line(ctx, start, n, xs, (i) => y(ind[k][i]), C[k], 1.5, 1);
 
   // Monte Carlo: paden (animatie) en banden
-  const xf = (step) => xs(n - 1) + step * slotW;
+  const xf = L.xf;
   if (sim) {
     ctx.save(); ctx.beginPath(); ctx.rect(m.left, m.top, W - m.left - m.right, plotB - m.top); ctx.clip();
     const nShow = S.anim ? S.anim.nShow : 0;
@@ -445,6 +450,7 @@ function drawChart(now) {
       ctx.fillText(`5% ${usd(e.p05)}`, W - m.right - 4, y(e.p05) + 8);
       ctx.globalAlpha = 1;
     }
+    if (S.overlays.dots && !reduceMotion) drawParticles(ctx, now, sim, xf, y, L);
     ctx.restore();
   }
 
@@ -475,6 +481,85 @@ function drawChart(now) {
     }
   }
 }
+// ------------------------------------------------------------------ bewegende dots (Monte Carlo-deeltjes)
+// Elke dot volgt één gesimuleerd pad van "nu" naar de horizon en landt daar. De landingen stapelen
+// zich rechts op tot een liggend histogram: zo zie je de kansverdeling letterlijk ontstaan.
+const PART = { list: [], land: new Float64Array(44), rings: [] };
+const ZR = 3.5; // histogram dekt ±3,5 standaarddeviaties
+function spawnParticle(p, now, sim, mode) {
+  p.k = (Math.random() * sim.nPaths) | 0;
+  p.dur = 2300 + Math.random() * 1900;
+  p.born = mode === "initial" ? now - Math.random() * p.dur : mode === "burst" ? now + Math.random() * 900 : now;
+}
+function burstParticles() {
+  PART.land.fill(0);
+  PART.burst = true;
+}
+function drawParticles(ctx, now, sim, xf, y, L) {
+  const want = L.small ? 70 : 150, NB = PART.land.length;
+  while (PART.list.length < want) { const p = {}; spawnParticle(p, now, sim, "initial"); PART.list.push(p); }
+  PART.list.length = want;
+  if (PART.burst) { for (const p of PART.list) spawnParticle(p, now, sim, "burst"); PART.burst = false; }
+  const H = sim.H, s0 = sim.s0, sd = (sim.sigEff || 0.0015) * Math.sqrt(H);
+  const edge = (j) => s0 * Math.exp(((j / NB) * 2 - 1) * ZR * sd);
+  const xEnd = xf(H) + L.fw * 0.5, maxW = Math.max(28, (xEnd - xf(0)) * 0.42);
+
+  // liggend histogram van de landingen
+  let maxC = 0; for (let j = 0; j < NB; j++) maxC = Math.max(maxC, PART.land[j]);
+  if (maxC > 0) {
+    for (let j = 0; j < NB; j++) {
+      if (PART.land[j] < 0.3) continue;
+      const yt = y(edge(j + 1)), yb = y(edge(j)), w = (PART.land[j] / maxC) * maxW;
+      ctx.fillStyle = edge(j + 0.5) >= s0 ? C.up : C.down; ctx.globalAlpha = .38;
+      ctx.fillRect(xEnd - w, yt + 1, w, Math.max(1, yb - yt - 2));
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // dots met een kort spoor
+  const priceAt = (k, st) => {
+    const a = Math.min(H, Math.floor(st)), b = Math.min(H, a + 1), f = st - a;
+    return sim.paths[a][k] + (sim.paths[b][k] - sim.paths[a][k]) * f;
+  };
+  for (const p of PART.list) {
+    if (p.k >= sim.nPaths) spawnParticle(p, now, sim, "now");
+    let u = (now - p.born) / p.dur;
+    if (u >= 1) {
+      const end = sim.paths[H][p.k];
+      const j = Math.floor(((Math.log(end / s0) / sd / ZR + 1) / 2) * NB);
+      if (j >= 0 && j < NB) { for (let q = 0; q < NB; q++) PART.land[q] *= 0.997; PART.land[j] += 1; }
+      PART.rings.push({ x: xEnd, y: y(end), t: now, up: end >= s0 });
+      spawnParticle(p, now, sim, "now"); u = 0;
+    }
+    if (u < 0) continue;
+    const ease = 1 - Math.pow(1 - u, 1.6); // vlot vertrekken, rustig landen
+    const st = ease * H, end = sim.paths[H][p.k], col = end >= s0 ? C.up : C.down;
+    const tail = Math.max(0, st - 1.6);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.globalAlpha = .3;
+    ctx.beginPath(); ctx.moveTo(xf(tail), y(priceAt(p.k, tail)));
+    for (let t = Math.ceil(tail); t < st; t++) ctx.lineTo(xf(t), y(sim.paths[t][p.k]));
+    const px = xf(st), py = y(priceAt(p.k, st));
+    ctx.lineTo(px, py); ctx.stroke();
+    ctx.globalAlpha = .92; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(px, py, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
+  // landingsringetjes
+  PART.rings = PART.rings.filter((r) => now - r.t < 550).slice(-80);
+  for (const r of PART.rings) {
+    const a = (now - r.t) / 550;
+    ctx.globalAlpha = .4 * (1 - a); ctx.strokeStyle = r.up ? C.up : C.down; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(r.x, r.y, 2 + a * 5, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // exacte kansen uit de volledige simulatie
+  if (sim.pUp === undefined) { let u = 0; const e = sim.paths[H]; for (let k = 0; k < e.length; k++) if (e[k] >= s0) u++; sim.pUp = u / e.length; }
+  ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "right"; ctx.lineWidth = 3; ctx.strokeStyle = C["surface-1"];
+  const lbl = (txt, yy, base) => { ctx.textBaseline = base; ctx.strokeText(txt, xEnd - 4, yy); ctx.fillStyle = C["text-primary"]; ctx.fillText(txt, xEnd - 4, yy); };
+  lbl(`▲ ${pct(sim.pUp, 0)} hoger`, y(s0) - 6, "bottom");
+  lbl(`▼ ${pct(1 - sim.pUp, 0)} lager`, y(s0) + 6, "top");
+}
+
 function line(ctx, start, n, xs, yf, color, w, alpha) {
   ctx.strokeStyle = color; ctx.lineWidth = w; ctx.globalAlpha = alpha; ctx.lineJoin = "round";
   ctx.beginPath(); let first = true;
@@ -490,8 +575,9 @@ function roundRect(ctx, x, y, w, h, r) {
 function slotFromX(clientX) {
   const L = S.layout; if (!L) return null;
   const r = chart.getBoundingClientRect(), x = clientX - r.left;
+  if (x > L.xNow) return L.n - 1 + Math.max(1, Math.min(S.H, Math.round((x - L.xs(L.n - 1)) / L.fw)));
   const i = Math.floor((x - L.m.left) / L.slotW) + L.start;
-  return Math.max(L.start, Math.min(L.n - 1 + S.H, i));
+  return Math.max(L.start, Math.min(L.n - 1, i));
 }
 function showTip(clientX, clientY) {
   const L = S.layout, tip = $("tip"); if (!L || !S.hover) return;
@@ -516,6 +602,15 @@ function showTip(clientX, clientY) {
     const step = i - L.n + 1, b = (S.anim?.bands || S.bands)?.[step];
     tip.append(el("div", { class: "t" }, `Over ${step * 5} min (${fmtTime.format(new Date(c[L.n - 1].t + step * STEP + STEP))})`));
     if (b) { row("mediaan", usd(b.p50)); row("50% kans", `${usd(b.p25)} – ${usd(b.p75)}`); row("90% kans", `${usd(b.p05)} – ${usd(b.p95)}`); }
+    const sim = S.anim?.sim || S.sim;
+    if (sim && S.hover.y != null && S.hover.y < L.plotB && step >= 1) {
+      const v = L.lo + (1 - (S.hover.y - L.m.top) / (L.plotB - L.m.top)) * (L.hi - L.lo);
+      const arr = sim.paths[step]; let above = 0;
+      for (let k = 0; k < arr.length; k++) if (arr[k] > v) above++;
+      tip.append(el("div", { class: "t" }, `Prijsniveau ${usd(v)}`));
+      row("kans erboven", pct(above / arr.length, 0));
+      row(`kans geraakt binnen ${step * 5} min`, pct(E.touchProb(sim, step, v), 0));
+    }
   }
   tip.hidden = false;
   const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -536,7 +631,7 @@ chart.addEventListener("keydown", (e) => {
   S.hover = { slot: Math.max(L.start, Math.min(L.n - 1 + S.H, cur + (e.key === "ArrowRight" ? 1 : -1))), y: null };
   S.dirty = true;
   const r = chart.getBoundingClientRect();
-  const x = S.hover.slot < L.n ? L.xs(S.hover.slot) : L.xs(L.n - 1) + (S.hover.slot - L.n + 1) * L.slotW;
+  const x = S.hover.slot < L.n ? L.xs(S.hover.slot) : L.xf(S.hover.slot - L.n + 1);
   showTip(r.left + x, r.top + r.height / 3);
 });
 chart.addEventListener("blur", () => { S.hover = null; $("tip").hidden = true; S.dirty = true; });

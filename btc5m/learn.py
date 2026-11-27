@@ -146,3 +146,22 @@ def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None) 
 
 def apply_dir_scale(p_raw: float, s: float) -> float:
     return 0.5 + s * (p_raw - 0.5)
+
+
+def recent_live(ev: pd.DataFrame, n: int = 12) -> list[dict]:
+    """Laatste `n` getoetste live voorspellingen met uitkomst (voor het dashboard)."""
+    if ev.empty or "realized_dir" not in ev:
+        return []
+    live = ev[~ev["source"].astype(str).str.startswith("replay")].dropna(subset=["realized_dir"])
+    rows = []
+    for _, r in live.tail(n).iloc[::-1].iterrows():
+        inside = None
+        if pd.notna(r.get("realized_60m")) and pd.notna(r.get("p05_60m")):
+            inside = bool(r["p05_60m"] <= r["realized_60m"] <= r["p95_60m"])
+        rows.append({
+            "time": r["candle_time"].isoformat(), "price": float(r["price"]), "p_up": float(r["p_up"]),
+            "went_up": bool(r["realized_dir"] > 0.5), "correct": bool((r["p_up"] > 0.5) == (r["realized_dir"] > 0.5)),
+            "price_60m": None if pd.isna(r.get("realized_60m")) else float(r["realized_60m"]),
+            "inside_90": inside,
+        })
+    return rows

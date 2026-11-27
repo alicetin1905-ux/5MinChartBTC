@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .forecast import DirectionModel, model_verdict, monte_carlo
-from .learn import apply_dir_scale, calibrate, evaluate_history, track_record
+from .learn import apply_dir_scale, calibrate, evaluate_history, recent_live, track_record
 from .signals import snapshot
 
 DISCLAIMER = ("Dit is een statistische analyse, geen financieel advies. 5-minuten bewegingen van BTC "
@@ -40,7 +40,7 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
         "direction_model": now,
         "backtest": bt,
         "model_verdict": model_verdict(bt) if backtest else "niet getest",
-        "learning": {"calibration": cal, "track_record": track_record(ev)},
+        "learning": {"calibration": cal, "track_record": track_record(ev), "recent_live": recent_live(ev)},
         "disclaimer": DISCLAIMER,
     }
 

@@ -2,6 +2,7 @@
 
 Schrijft naar `outdir`:
 - latest.json / latest.md  : volledige analyse van deze run
+- candles.json             : laatste 24 uur aan 5m candles (voor het dashboard)
 - agent.md                 : Claude-interpretatie (als ingeschakeld en gelukt)
 - history.csv              : één regel per run; volgende runs toetsen deze voorspellingen en
                              leren daarvan (zie learn.py)
@@ -97,9 +98,12 @@ def run_once(outdir: str, sources: list[str], bars: int = 8640, agent: str = "au
     a = analyse(df, derivatives=fetch_derivatives_context(source), history=history)
     a["source"] = source
     md = to_markdown(a)
-    (out / "latest.json").write_text(json.dumps(a, indent=2, ensure_ascii=False), encoding="utf-8")
     (out / "latest.md").write_text(md, encoding="utf-8")
 
+    recent = df.tail(288)  # laatste 24 uur voor de grafiek op het dashboard
+    candles = [[int(t.timestamp() * 1000), *(round(float(x), 2) for x in row)]
+               for t, row in zip(recent.index, recent[["open", "high", "low", "close", "volume"]].to_numpy())]
+    (out / "candles.json").write_text(json.dumps(candles), encoding="utf-8")
     (out / "learning.json").write_text(json.dumps(a["learning"], indent=2, ensure_ascii=False), encoding="utf-8")
     new_file = not hist.exists()
     with hist.open("a", newline="", encoding="utf-8") as fh:
@@ -109,15 +113,18 @@ def run_once(outdir: str, sources: list[str], bars: int = 8640, agent: str = "au
         w.writerow(_history_row(a, source))
 
     use_agent = agent == "on" or (agent == "auto" and os.environ.get("ANTHROPIC_API_KEY"))
+    a["agent_summary"] = None
     if use_agent:
         try:
             from .agent import summarise
-            text = summarise(a)
-            (out / "agent.md").write_text(text + "\n", encoding="utf-8")
-            print(text)
+            a["agent_summary"] = summarise(a)
         except Exception as err:  # analyse blijft bruikbaar, ook als Claude faalt
             print(f"Claude-samenvatting mislukt: {err}", file=sys.stderr)
-            print(md)
-    else:
-        print(md)
+    agent_file = out / "agent.md"
+    if a["agent_summary"]:
+        agent_file.write_text(a["agent_summary"] + "\n", encoding="utf-8")
+    elif agent_file.exists():
+        agent_file.unlink()  # geen verouderde interpretatie laten staan
+    (out / "latest.json").write_text(json.dumps(a, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(a["agent_summary"] or md)
     return 0

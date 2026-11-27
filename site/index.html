@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTC 5m analist</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="Live analyse en kansverwachting voor de 5-minuten chart van BTC perpetual futures, elke 15 minuten bijgewerkt.">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f9;
+  --surface-1: #ffffff;
+  --text-primary: #191919;
+  --text-secondary: #666666;
+  --grid: #e7e7e7;
+  --axis: #c2c2c2;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #257de0;
+  --good: #006c10;
+  --bad: #dc3c3d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0b0b0b;
+    --surface-1: #191919;
+    --text-primary: #efefef;
+    --text-secondary: #9c9c9c;
+    --grid: #303030;
+    --axis: #474747;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #338ced;
+    --good: #53c556;
+    --bad: #eb6263;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+header h1 { font-size: 22px; font-weight: 600; margin: 0; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  transition: opacity .2s;
+}
+.card h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.loading .card, .loading .tiles { opacity: .55; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.card .tiles { margin-top: 12px; }
+.card .tile { background: transparent; }
+.tile .label { color: var(--text-secondary); font-size: 13px; }
+.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.tile .delta { color: var(--text-secondary); font-size: 13px; }
+.chart { position: relative; margin-top: 12px; }
+.chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.chart svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--text-secondary); font-size: 13px; margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key-line { width: 16px; height: 2px; background: var(--series-1); border-radius: 1px; }
+.key-line.faint { opacity: .6; }
+.key-rect { width: 14px; height: 10px; background: var(--series-1); border-radius: 2px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid2 > .card { margin-top: 16px; min-width: 0; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+th { text-align: left; color: var(--text-secondary); font-weight: 500; font-size: 13px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 10px 0 0; font-size: 14px; }
+dt { color: var(--text-secondary); }
+dd { margin: 0; font-variant-numeric: tabular-nums; }
+.ok { color: var(--good); }
+.no { color: var(--bad); }
+.prose { white-space: pre-wrap; font-size: 14px; margin-top: 10px; }
+.note { color: var(--text-secondary); font-size: 13px; margin-top: 10px; }
+.error { color: var(--bad); }
+footer { color: var(--text-secondary); font-size: 13px; margin-top: 24px; }
+footer a { color: inherit; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 10;
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+  padding: 8px 10px; font-size: 13px; min-width: 150px;
+}
+.tip .t { color: var(--text-secondary); margin-bottom: 4px; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tip .row b { font-variant-numeric: tabular-nums; }
+.tip .row span { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<main id="app" class="loading">
+  <header>
+    <h1>BTC perpetual · 5m analyse</h1>
+    <p class="sub" id="meta">Laden…</p>
+  </header>
+
+  <section class="tiles" id="tiles" aria-label="Kerncijfers"></section>
+
+  <section class="card">
+    <h2>Koers en verwachting komend uur</h2>
+    <p class="sub">Slotkoers per 5 minuten (laatste 6 uur, op mobiel 3 uur; lokale tijd). Rechts van "nu" de gesimuleerde bandbreedte voor het komende uur.</p>
+    <div class="chart" id="chart"></div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="key-line"></i>Slotkoers</span>
+      <span><i class="key-line faint"></i>Mediaan verwachting</span>
+      <span><i class="key-rect" style="opacity:.32"></i>50% kans</span>
+      <span><i class="key-rect" style="opacity:.12"></i>90% kans</span>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Kansverdeling</h2>
+      <p class="sub">Prijs waarbinnen de koers met 50% en 90% kans uitkomt, zonder richtingsaanname.</p>
+      <div class="scroll"><table id="dist"></table></div>
+      <p class="note" id="touch"></p>
+    </section>
+    <section class="card">
+      <h2>Technisch beeld</h2>
+      <dl id="tech"></dl>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Zelflerend: hoe goed klopten eerdere voorspellingen?</h2>
+    <p class="sub" id="learnSub"></p>
+    <div class="tiles" id="learnTiles"></div>
+    <h2 style="margin-top:16px">Laatste live voorspellingen</h2>
+    <div class="scroll"><table id="recent"></table></div>
+  </section>
+
+  <section class="card" id="agentCard" hidden>
+    <h2>Interpretatie door Claude</h2>
+    <div class="prose" id="agent"></div>
+  </section>
+
+  <footer>
+    <p>Statistische analyse, geen financieel advies. Op de 5-minuten chart is de richting van BTC grotendeels ruis;
+      gebruik de kansen als bandbreedte, niet als zekerheid.</p>
+    <p>Data: <a href="latest.json">latest.json</a> · <a href="history.csv">history.csv</a> ·
+      <a href="learning.json">learning.json</a> · <a href="latest.md">latest.md</a> ·
+      <a href="https://github.com/alicetin1905-ux/5MinChartBTC">broncode</a></p>
+  </footer>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+"use strict";
+const NF = (d = 0) => new Intl.NumberFormat("nl-NL", { minimumFractionDigits: d, maximumFractionDigits: d });
+const usd = (x) => NF(0).format(x);
+const pct = (x, d = 1) => NF(d).format(x * 100) + "%";
+const signed = (x, d = 2) => (x > 0 ? "+" : x < 0 ? "−" : "") + NF(d).format(Math.abs(x)) + "%";
+const timeFmt = new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit" });
+const dateTimeFmt = new Intl.DateTimeFormat("nl-NL", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function svg(tag, attrs = {}, text) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+async function getJSON(name, bust) {
+  const r = await fetch(`${name}?t=${bust}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+  return r.json();
+}
+
+// ------------------------------------------------------------------ tiles
+function tile(parent, label, value, delta) {
+  const t = el("div", { class: "tile" });
+  t.append(el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+  if (delta) t.append(el("div", { class: "delta" }, delta));
+  parent.append(t);
+}
+
+function renderTiles(a) {
+  const s = a.snapshot, mc = a.monte_carlo, dm = a.direction_model, d = a.derivatives || {};
+  const box = $("tiles"); box.replaceChildren();
+  tile(box, "Prijs (USDT)", usd(s.price), `1u ${signed(s.change_pct["1h"])} · 24u ${signed(s.change_pct["24h"])}`);
+  tile(box, "Technische bias", s.bias, `score ${s.score > 0 ? "+" : ""}${s.score} · trend 5m ${s.trend_5m}`);
+  tile(box, `Kans hoger over ${dm.horizon_min} min`, pct(dm.p_up), `ruw model ${pct(dm.p_up_raw)} · ${a.model_verdict.split(" – ")[0]}`);
+  const h60 = mc.horizons["60m"];
+  if (h60) tile(box, "Bandbreedte komend uur (90%)", `${usd(h60.p05)} – ${usd(h60.p95)}`, `gemiddelde beweging ±${NF(2).format(h60.expected_abs_move_pct)}%`);
+  if (d.funding_rate !== undefined) tile(box, "Funding rate (per 8 uur)", signed(d.funding_rate * 100, 4),
+    `open interest ≈ $${NF(2).format(d.open_interest_usd / 1e9)} mld`);
+}
+
+// ------------------------------------------------------------------ chart
+let chartState = null;
+
+function niceTicks(min, max, count) {
+  const span = max - min, raw = span / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max; v += step) out.push(v);
+  return out;
+}
+
+function renderChart(a, candles) {
+  const host = $("chart");
+  const W = Math.max(320, host.clientWidth), H = W < 560 ? 280 : 360;
+  const small = W < 560;
+  const m = { top: 12, right: small ? 78 : 92, bottom: 28, left: small ? 52 : 64 };
+  const hist = candles.slice(small ? -36 : -72).map((c) => ({ t: c[0], o: c[1], h: c[2], l: c[3], c: c[4], kind: "hist" }));
+  const last = hist[hist.length - 1];
+  const tNow = last.t;
+  const fc = [{ t: tNow, p05: last.c, p25: last.c, p50: last.c, p75: last.c, p95: last.c, bars: 0 }];
+  for (const [, h] of Object.entries(a.monte_carlo.horizons).sort((x, y) => x[1].bars - y[1].bars)) {
+    fc.push({ t: tNow + h.bars * 300000, ...h, kind: "fc" });
+  }
+  const lv = a.snapshot.levels;
+  let lo = Math.min(...hist.map((d) => d.c), ...fc.map((d) => d.p05));
+  let hi = Math.max(...hist.map((d) => d.c), ...fc.map((d) => d.p95));
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const levels = [];
+  if (lv.resistance?.length && lv.resistance[0] < hi + (hi - lo) * 0.3) levels.push({ v: lv.resistance[0], name: "weerstand" });
+  if (lv.support?.length && lv.support[0] > lo - (hi - lo) * 0.3) levels.push({ v: lv.support[0], name: "steun" });
+  for (const l of levels) { lo = Math.min(lo, l.v - pad / 2); hi = Math.max(hi, l.v + pad / 2); }
+
+  const t0 = hist[0].t, t1 = fc[fc.length - 1].t;
+  const x = (t) => m.left + ((t - t0) / (t1 - t0)) * (W - m.left - m.right);
+  const y = (v) => m.top + (1 - (v - lo) / (hi - lo)) * (H - m.top - m.bottom);
+
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", tabindex: "0",
+    "aria-label": `Slotkoers laatste ${small ? 3 : 6} uur, nu ${usd(last.c)} USDT, met verwachte bandbreedte voor het komende uur. Gebruik de pijltjestoetsen om door de punten te gaan.` });
+
+  // grid + y-axis
+  for (const v of niceTicks(lo, hi, H < 300 ? 4 : 6)) {
+    root.append(svg("line", { x1: m.left, x2: W - m.right, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }));
+    root.append(svg("text", { x: m.left - 8, y: y(v), "text-anchor": "end", "dominant-baseline": "middle",
+      fill: "var(--text-secondary)", "font-size": 12, style: "font-variant-numeric: tabular-nums" }, usd(v)));
+  }
+  // x-axis (elk heel uur)
+  root.append(svg("line", { x1: m.left, x2: W - m.right, y1: H - m.bottom, y2: H - m.bottom, stroke: "var(--axis)", "stroke-width": 1 }));
+  const every = 3600000;
+  for (let t = Math.ceil(t0 / every) * every; t <= tNow; t += every) {
+    root.append(svg("text", { x: x(t), y: H - m.bottom + 18, "text-anchor": "middle", fill: "var(--text-secondary)", "font-size": 12 },
+      timeFmt.format(new Date(t))));
+  }
+  // "nu"
+  root.append(svg("line", { x1: x(tNow), x2: x(tNow), y1: m.top, y2: H - m.bottom, stroke: "var(--axis)", "stroke-width": 1 }));
+  root.append(svg("text", { x: x(tNow) + 4, y: m.top + 10, fill: "var(--text-secondary)", "font-size": 12 }, "nu"));
+
+  // steun / weerstand
+  for (const l of levels) {
+    root.append(svg("line", { x1: m.left, x2: W - m.right, y1: y(l.v), y2: y(l.v), stroke: "var(--text-secondary)", "stroke-width": 1, opacity: .5 }));
+    root.append(svg("text", { x: m.left + 4, y: y(l.v) - 4, fill: "var(--text-secondary)", "font-size": 11,
+      stroke: "var(--surface-1)", "stroke-width": 3, "paint-order": "stroke" }, `${l.name} ${usd(l.v)}`));
+  }
+
+  // banden
+  const band = (kLo, kHi, op) => {
+    const pts = fc.map((d) => `${x(d.t)},${y(d[kHi])}`).concat(fc.slice().reverse().map((d) => `${x(d.t)},${y(d[kLo])}`));
+    root.append(svg("polygon", { points: pts.join(" "), fill: "var(--series-1)", opacity: op }));
+  };
+  band("p05", "p95", 0.12);
+  band("p25", "p75", 0.20);
+  root.append(svg("polyline", { points: fc.map((d) => `${x(d.t)},${y(d.p50)}`).join(" "), fill: "none",
+    stroke: "var(--series-1)", "stroke-width": 2, opacity: .6, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+  // koerslijn
+  root.append(svg("polyline", { points: hist.map((d) => `${x(d.t)},${y(d.c)}`).join(" "), fill: "none",
+    stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  root.append(svg("circle", { cx: x(tNow), cy: y(last.c), r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }));
+
+  // directe labels rechts: p95 / p05 na 60 min
+  const end = fc[fc.length - 1];
+  for (const [k, txt] of [["p95", "95%"], ["p05", "5%"]]) {
+    root.append(svg("text", { x: x(end.t) + 6, y: y(end[k]), "dominant-baseline": "middle", fill: "var(--text-secondary)", "font-size": small ? 11 : 12 },
+      `${txt} ${usd(end[k])}`));
+  }
+
+  // hover-laag
+  const cross = svg("line", { y1: m.top, y2: H - m.bottom, stroke: "var(--text-secondary)", "stroke-width": 1, visibility: "hidden" });
+  const dot = svg("circle", { r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" });
+  root.append(cross, dot);
+  const points = hist.concat(fc.slice(1));
+  const hit = svg("rect", { x: m.left, y: m.top, width: W - m.left - m.right, height: H - m.top - m.bottom, fill: "transparent" });
+  root.append(hit);
+
+  host.replaceChildren(root);
+  chartState = { root, points, x, y, cross, dot, idx: points.length - 1 };
+
+  const show = (i, clientX, clientY) => {
+    chartState.idx = i;
+    const p = points[i];
+    const px = x(p.t), py = y(p.kind === "fc" ? p.p50 : p.c);
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("visibility", "visible");
+    const tip = $("tip"); tip.replaceChildren();
+    const row = (label, val) => { const r = el("div", { class: "row" }); r.append(el("span", {}, label), el("b", {}, val)); tip.append(r); };
+    if (p.kind === "fc") {
+      tip.append(el("div", { class: "t" }, `Over ${p.bars * 5} min (${timeFmt.format(new Date(p.t))})`));
+      row("mediaan", usd(p.p50)); row("50% kans", `${usd(p.p25)} – ${usd(p.p75)}`); row("90% kans", `${usd(p.p05)} – ${usd(p.p95)}`);
+    } else {
+      tip.append(el("div", { class: "t" }, dateTimeFmt.format(new Date(p.t))));
+      row("slot", usd(p.c)); row("hoog / laag", `${usd(p.h)} / ${usd(p.l)}`);
+    }
+    tip.hidden = false;
+    const box = root.getBoundingClientRect();
+    const cx = clientX ?? box.left + (px / W) * box.width, cy = clientY ?? box.top + (py / H) * box.height;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.min(window.innerWidth - tw - 8, Math.max(8, cx + 14)) + "px";
+    tip.style.top = Math.max(8, Math.min(window.innerHeight - th - 8, cy - th - 12)) + "px";
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); $("tip").hidden = true; };
+  const nearest = (clientX) => {
+    const box = root.getBoundingClientRect();
+    const sx = ((clientX - box.left) / box.width) * W;
+    let best = 0, bd = Infinity;
+    points.forEach((p, i) => { const dd = Math.abs(x(p.t) - sx); if (dd < bd) { bd = dd; best = i; } });
+    return best;
+  };
+  hit.addEventListener("pointermove", (e) => show(nearest(e.clientX), e.clientX, e.clientY));
+  hit.addEventListener("pointerleave", hide);
+  root.addEventListener("focus", () => show(chartState.idx));
+  root.addEventListener("blur", hide);
+  root.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      show(Math.max(0, Math.min(points.length - 1, chartState.idx + (e.key === "ArrowRight" ? 1 : -1))));
+    } else if (e.key === "Escape") hide();
+  });
+}
+
+// ------------------------------------------------------------------ tabellen
+function renderDist(a) {
+  const t = $("dist"); t.replaceChildren();
+  const head = el("tr");
+  ["Horizon", "5%", "25%", "mediaan", "75%", "95%"].forEach((h, i) => head.append(el("th", { class: i ? "num" : "" }, h)));
+  t.append(head);
+  for (const [k, h] of Object.entries(a.monte_carlo.horizons)) {
+    const r = el("tr");
+    r.append(el("td", {}, k.replace("m", " min")));
+    [h.p05, h.p25, h.p50, h.p75, h.p95].forEach((v) => r.append(el("td", { class: "num" }, usd(v))));
+    t.append(r);
+  }
+  const keys = Object.keys(a.monte_carlo.horizons), lastK = keys[keys.length - 1];
+  const tp = a.monte_carlo.horizons[lastK].touch_prob;
+  const parts = Object.entries(tp).map(([k, v]) => {
+    const m = k.match(/^(resistance|support)@(.+)$/);
+    const name = m ? `${m[1] === "resistance" ? "weerstand" : "steun"} ${usd(+m[2])}` : k;
+    return `${name}: ${pct(v, 0)}`;
+  });
+  $("touch").textContent = `Kans om binnen ${lastK.replace("m", " min")} te raken — ${parts.join(" · ")}`;
+}
+
+function renderTech(a) {
+  const s = a.snapshot, i = s.indicators, lv = s.levels;
+  const dl = $("tech"); dl.replaceChildren();
+  const add = (k, v) => dl.append(el("dt", {}, k), el("dd", {}, v));
+  add("Trend", `5m ${s.trend_5m}` + Object.entries(s.higher_timeframes).map(([k, v]) => ` · ${k.replace("min", "m")} ${v.trend}`).join(""));
+  add("RSI 14", NF(1).format(i.rsi14));
+  add("MACD-histogram", NF(2).format(i.macd_hist));
+  add("Bollinger %B", NF(2).format(i.bb_pctb));
+  add("ATR 14", `${usd(i.atr14)} (${NF(3).format(i.atr_pct_of_price)}%) · ${s.volatility_regime}`);
+  add("Dag-VWAP", usd(i.vwap));
+  add("EMA 9 / 21 / 50 / 200", [i.ema9, i.ema21, i.ema50, i.ema200].map(usd).join(" / "));
+  add("Weerstand", lv.resistance.map((v, k) => `${usd(v)} (${lv.resistance_touches[k]}×)`).join(", ") || "—");
+  add("Steun", lv.support.map((v, k) => `${usd(v)} (${lv.support_touches[k]}×)`).join(", ") || "—");
+  add("24u hoog / laag", `${usd(lv.high_24h)} / ${usd(lv.low_24h)}`);
+}
+
+function mark(ok, yes, no) {
+  const span = el("span", { class: ok ? "ok" : "no" }, ok ? `✓ ${yes}` : `✗ ${no}`);
+  return span;
+}
+
+function renderLearning(a) {
+  const L = a.learning || {}, c = L.calibration || {}, tr = L.track_record || {};
+  $("learnSub").textContent = tr.n_direction
+    ? `${tr.n_direction} voorspellingen getoetst sinds ${tr.since} (${tr.n_live} live, ${tr.n_replay} teruggespeeld met alleen de data van dat moment).`
+    : "Nog geen voorspellingen getoetst.";
+  const box = $("learnTiles"); box.replaceChildren();
+  if (tr.n_direction) tile(box, "Richting goed voorspeld", pct(tr.hit_rate), `stijgingen in die periode: ${pct(tr.share_up)}`);
+  if (tr.n_range) tile(box, "Koers binnen 90%-band", pct(tr.coverage_90, 0), "doel: 90%");
+  if (c.vol_scale) tile(box, "Geleerde bandbreedtefactor", `×${NF(2).format(c.vol_scale)}`, c.vol_scale > 1.02 ? "banden verbreed" : c.vol_scale < 0.98 ? "banden versmald" : "geen correctie nodig");
+  if (c.dir_scale !== undefined) tile(box, "Vertrouwen in richtingskans", NF(2).format(c.dir_scale), "0 = negeren · 1 = volledig");
+
+  const t = $("recent"); t.replaceChildren();
+  const rows = L.recent_live || [];
+  if (!rows.length) {
+    const r = el("tr"); r.append(el("td", {}, "Nog geen live voorspellingen met bekende uitkomst; die verschijnen na de eerste geplande runs."));
+    t.append(r); return;
+  }
+  const head = el("tr");
+  ["Tijd", "Prijs", "Kans hoger", "Uitkomst 15 min", "Prijs na 60 min", "Binnen 90%-band"].forEach((h, i) =>
+    head.append(el("th", { class: i === 1 || i === 2 || i === 4 ? "num" : "" }, h)));
+  t.append(head);
+  for (const r of rows) {
+    const tr2 = el("tr");
+    tr2.append(el("td", {}, dateTimeFmt.format(new Date(r.time))));
+    tr2.append(el("td", { class: "num" }, usd(r.price)));
+    tr2.append(el("td", { class: "num" }, pct(r.p_up)));
+    const out = el("td"); out.append(document.createTextNode(r.went_up ? "▲ hoger · " : "▼ lager · "), mark(r.correct, "goed", "fout")); tr2.append(out);
+    tr2.append(el("td", { class: "num" }, r.price_60m == null ? "—" : usd(r.price_60m)));
+    const ins = el("td"); if (r.inside_90 == null) ins.textContent = "—"; else ins.append(mark(r.inside_90, "ja", "nee")); tr2.append(ins);
+    t.append(tr2);
+  }
+}
+
+// ------------------------------------------------------------------ laden & verversen
+let lastGenerated = null, latest = null, candles = null;
+
+async function load() {
+  const bust = Date.now();
+  $("app").classList.add("loading");
+  try {
+    const a = await getJSON("latest.json", bust);
+    if (a.generated_at !== lastGenerated) {
+      candles = await getJSON("candles.json", bust);
+      latest = a; lastGenerated = a.generated_at;
+      render();
+      const agent = a.agent_summary;
+      $("agentCard").hidden = !agent;
+      if (agent) $("agent").textContent = agent;
+    }
+    const age = Math.round((Date.now() - new Date(latest.generated_at).getTime()) / 60000);
+    $("meta").textContent = `Laatste candle ${dateTimeFmt.format(new Date(latest.snapshot.time))} · berekend ${age} min geleden · bron ${(latest.source || "okx").toUpperCase()} · ververst automatisch`;
+    $("meta").classList.remove("error");
+  } catch (err) {
+    $("meta").textContent = `Kon de data niet laden (${err.message}). Nieuwe poging over een minuut.`;
+    $("meta").classList.add("error");
+  } finally {
+    $("app").classList.remove("loading");
+  }
+}
+
+function render() {
+  if (!latest) return;
+  renderTiles(latest);
+  renderChart(latest, candles);
+  renderDist(latest);
+  renderTech(latest);
+  renderLearning(latest);
+}
+
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => latest && renderChart(latest, candles), 150); });
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

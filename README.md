@@ -38,6 +38,12 @@ Actions `python -m btc5m run`. Daarna:
   - `history.csv`: één regel per run; volgende runs toetsen deze voorspellingen en leren ervan;
   - `learning.json`: het track record en de geleerde kalibratie.
 
+- staat er een **live dashboard** op GitHub Pages:
+  <https://alicetin1905-ux.github.io/5MinChartBTC/>. Je ziet er de grafiek met de verwachting voor
+  het komende uur, de kansverdeling, het technisch beeld en het track record. De pagina ververst
+  zichzelf elke minuut. Eenmalig instellen: Settings → Pages → *Deploy from a branch* →
+  `btc-reports` / `(root)`.
+
 Je kunt een run ook met de hand starten: Actions → *BTC 5m analyse* → **Run workflow**.
 
 **Claude-interpretatie aanzetten (optioneel):** voeg onder Settings → Secrets and variables →

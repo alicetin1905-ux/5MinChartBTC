@@ -26,6 +26,28 @@ In Claude Code (vanuit deze map):
 - `/btc5m`, of
 - vraag bijvoorbeeld: *"Gebruik de btc-5m-analist: wat doet BTC het komende uur?"*
 
+## Automatisch elke 15 minuten
+
+De workflow `.github/workflows/btc5m-schedule.yml` draait elke 15 minuten via GitHub
+Actions `python -m btc5m run`. Daarna:
+
+- staat de samenvatting bij elke run in het tabblad **Actions** (job summary);
+- komen de rapporten op de aparte branch **`btc-reports`**:
+  - `latest.md` en `latest.json`: de meest recente analyse;
+  - `agent.md`: de interpretatie door Claude (alleen als die is ingeschakeld, zie hieronder);
+  - `history.csv`: één regel per run, zodat je de voorspellingen later kunt toetsen.
+
+Je kunt een run ook met de hand starten: Actions → *BTC 5m analyse* → **Run workflow**.
+
+**Claude-interpretatie aanzetten (optioneel):** voeg onder Settings → Secrets and variables →
+Actions het secret `ANTHROPIC_API_KEY` toe. Elke run laat Claude dan de cijfers
+interpreteren, op dezelfde manier als de agent `btc-5m-analist`. Het model kies je met de
+repository-variabele `CLAUDE_MODEL` (standaard `claude-opus-5-5`). Let op: dit kost
+API-tegoed voor 96 runs per dag. Zonder het secret draait alleen de gratis cijferanalyse.
+
+Liever lokaal? Zet in je crontab:
+`*/15 * * * * cd /pad/naar/5MinChartBTC && python3 -m btc5m run --outdir reports`
+
 ## Wat er berekend wordt
 
 | Onderdeel | Inhoud |

@@ -30,7 +30,18 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--bars", type=int, default=3000)
     f.add_argument("--out", default="data/btc_5m.csv")
 
+    r = sub.add_parser("run", help="Eén geplande run: analyse, rapporten en geschiedenis bijwerken")
+    r.add_argument("--outdir", default="reports")
+    r.add_argument("--sources", default="okx,binance", help="Bronnen in volgorde van voorkeur")
+    r.add_argument("--bars", type=int, default=3000)
+    r.add_argument("--agent", choices=["auto", "on", "off"], default="auto",
+                   help="Claude-samenvatting: auto = alleen als ANTHROPIC_API_KEY gezet is")
+
     args = p.parse_args(argv)
+
+    if args.cmd == "run":
+        from .scheduled import run_once
+        return run_once(args.outdir, args.sources.split(","), args.bars, args.agent)
 
     if args.cmd == "fetch":
         df = fetch_candles(args.bars, args.source)

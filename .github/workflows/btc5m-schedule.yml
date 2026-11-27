@@ -1,0 +1,64 @@
+name: BTC 5m analyse (elke 15 min)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # UTC; GitHub kan geplande runs enkele minuten vertragen
+  workflow_dispatch: {}       # handmatig starten via het Actions-tabblad
+
+permissions:
+  contents: write
+
+concurrency:
+  group: btc5m-schedule
+  cancel-in-progress: false
+
+env:
+  REPORTS_BRANCH: btc-reports
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependencies
+        run: |
+          pip install -r requirements.txt
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then pip install anthropic; fi
+
+      - name: Rapportenbranch klaarzetten
+        run: |
+          if git ls-remote --exit-code --heads origin "$REPORTS_BRANCH" >/dev/null; then
+            git fetch --depth 1 origin "$REPORTS_BRANCH:$REPORTS_BRANCH"
+            git worktree add out "$REPORTS_BRANCH"
+          else
+            git worktree add --detach out
+            git -C out checkout --orphan "$REPORTS_BRANCH"
+            git -C out rm -rfq .
+          fi
+
+      - name: Analyse draaien
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+        run: python -m btc5m run --outdir out
+
+      - name: Samenvatting in de run tonen
+        run: |
+          if [ -f out/agent.md ]; then cat out/agent.md >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY"; fi
+          cat out/latest.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rapporten opslaan op de rapportenbranch
+        run: |
+          cd out
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Analyse $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push origin "HEAD:$REPORTS_BRANCH"

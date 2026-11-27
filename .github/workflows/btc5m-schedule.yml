@@ -4,7 +4,7 @@ on:
   schedule:
     # Elke 15 min, 2 min na het sluiten van een 5m-candle; niet op :00/:15/:30/:45,
     # want die drukke momenten slaat GitHub vaker over of vertraagt het. Tijden in UTC.
-    - cron: "2,17,32,47 * * * *"
+    - cron: "3,18,33,48 * * * *"
   workflow_dispatch: {}       # handmatig starten via het Actions-tabblad
 
 permissions:

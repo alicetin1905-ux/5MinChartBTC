@@ -4,11 +4,14 @@ on:
   schedule:
     # Elke 15 min, 2 min na het sluiten van een 5m-candle; niet op :00/:15/:30/:45,
     # want die drukke momenten slaat GitHub vaker over of vertraagt het. Tijden in UTC.
+    # Reserve: de planner van GitHub is "best effort" en sloeg in deze repo alle runs over.
+    # De runs worden daarom vooral gestart door de keten onderaan (elke run start de volgende).
     - cron: "3,18,33,48 * * * *"
-  workflow_dispatch: {}       # handmatig starten via het Actions-tabblad
+  workflow_dispatch: {}       # handmatig starten via het Actions-tabblad (start ook de keten opnieuw)
 
 permissions:
-  contents: write
+  contents: write   # rapportenbranch bijwerken
+  actions: write    # de volgende run starten (zelfstartende keten)
 
 concurrency:
   group: btc5m-schedule
@@ -20,7 +23,7 @@ env:
 jobs:
   analyse:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # eerste run speelt 14 dagen terug (~2 min)
+    timeout-minutes: 40  # analyse (~1-2 min, eerste keer ~3) + wachten tot het volgende kwartier (≤ 15 min)
     steps:
       - uses: actions/checkout@v4
 
@@ -71,3 +74,29 @@ jobs:
           git add -A
           git commit -qm "Analyse $(date -u +'%Y-%m-%d %H:%M') UTC"
           git push -q -f origin "HEAD:$REPORTS_BRANCH"
+
+      - name: Wachten tot het volgende tijdstip en de volgende run starten
+        # Zelfstartende keten: deze stap draait ook als de analyse mislukte, zodat de keten niet breekt.
+        # Er wordt geen nieuwe run gestart als er al een andere run klaarstaat of bezig is (geen dubbele ketens).
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: btc5m-schedule.yml
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          now=$(date -u +%s)
+          base=$(( now - now % 3600 ))
+          for m in 3 18 33 48 63; do
+            t=$(( base + m * 60 ))
+            if [ "$t" -gt $(( now + 10 )) ]; then break; fi
+          done
+          echo "Volgende run om $(date -u -d @$t +%H:%M) UTC; wachten $(( t - now )) s"
+          sleep $(( t - now ))
+          others=$(gh run list --workflow "$WORKFLOW" --limit 20 --json databaseId,status \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status != \"completed\")] | length")
+          if [ "$others" -gt 0 ]; then
+            echo "Er staat al een andere run klaar of loopt al ($others); geen nieuwe gestart."
+          else
+            gh workflow run "$WORKFLOW" --ref "$REF"
+            echo "Volgende run gestart."
+          fi

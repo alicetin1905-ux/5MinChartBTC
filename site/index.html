@@ -236,6 +236,7 @@ footer a { color: inherit; }
         <li data-s="3"><b class="n">3</b><div>Per stap: schok uit historische rendementen<div class="formula">P<sub>t+1</sub> = P<sub>t</sub>·e<sup>σ·z − ½σ²</sup></div></div></li>
         <li data-s="4"><b class="n">4</b><div>Uitkomst <span id="mcHz">over 60 min</span><div class="formula" id="mcResult">—</div></div></li>
       </ol>
+      <p class="sub" id="macroNext" style="margin-top:8px"></p>
       <h2 style="margin-top:10px;font-size:13px">Volatiliteit per uur</h2>
       <svg id="seasonChart" width="100%" height="74" aria-label="Gemiddelde volatiliteit per uur van de dag"></svg>
     </section>
@@ -319,6 +320,9 @@ footer a { color: inherit; }
       </div>
     </div>
     <div class="row" id="learnTiles" style="margin-top:10px;gap:12px"></div>
+    <h2 style="margin-top:16px">Scorebord · kwaliteit van de bandbreedte per dag</h2>
+    <p class="sub">Vaardigheid = hoeveel beter de banden scoren dan een naïeve band (de spreiding van de 24 uur ervoor). Boven de nullijn = beter dan naïef. De score bestraft te brede banden én uitkomsten buiten de band.</p>
+    <svg id="skillChart" width="100%" height="200" aria-label="Vaardigheid per dag ten opzichte van een naïeve band"></svg>
   </section>
 
   <section class="card">

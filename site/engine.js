@@ -121,14 +121,28 @@
   }
   // ---- seizoensvolatiliteit (zie forecast.seasonal_factors) ---------------
   function seasonBucket(t) { const d = new Date(t), wd = d.getUTCDay(); return d.getUTCHours() + ((wd === 0 || wd === 6) ? 24 : 0); }
-  /** EWMA-σ op rendementen gedeeld door de seizoensfactor van hun uur (season = σ-factoren, lengte 48). */
-  function deseasonalizedSigma(c, season) {
-    const lr = c.map((d, i) => (i ? Math.log(d.c / c[i - 1].c) / season[seasonBucket(d.t)] : NaN));
+  /** Variantie-vermenigvuldiger voor de candle die op tijdstip t begint (zie forecast.event_var_mult). */
+  function eventVarMult(t, ev) {
+    if (!ev || !ev.events || !ev.events.length) return 1;
+    let m = 1;
+    for (const e of ev.events) {
+      const w = e.impact >= 3 ? 1 : 0.5;
+      if (t === e.t) m *= Math.pow(ev.m0, w);
+      else if (t === e.t + 300000 || t === e.t + 600000) m *= Math.pow(ev.m1, w);
+    }
+    return m;
+  }
+  /** EWMA-σ op rendementen gedeeld door de verwachte schaal van hun candle (seizoen × macro). */
+  function deseasonalizedSigma(c, season, ev = null) {
+    const lr = c.map((d, i) => (i ? Math.log(d.c / c[i - 1].c) / (season[seasonBucket(d.t)] * Math.sqrt(eventVarMult(d.t, ev))) : NaN));
     return ewmaSigma(lr);
   }
-  function stepScales(lastT, H, season) {
+  function stepScales(lastT, H, season, ev = null) {
     const out = [];
-    for (let t = 1; t <= H; t++) out.push(season ? season[seasonBucket(lastT + t * 300000)] : 1);
+    for (let t = 1; t <= H; t++) {
+      const tt = lastT + t * 300000;
+      out.push((season ? season[seasonBucket(tt)] : 1) * Math.sqrt(eventVarMult(tt, ev)));
+    }
     return out;
   }
 
@@ -269,7 +283,7 @@
   }
 
   const api = { LAMBDA, ema, indicators, ewmaSigma, features, direction, simulate, calibratePaths, quantiles, bands, touchProb,
-    seasonBucket, deseasonalizedSigma, stepScales,
+    seasonBucket, deseasonalizedSigma, stepScales, eventVarMult,
     scorecard, swingLevels, resample, mulberry32 };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BTC5M = api;
 })(typeof self !== "undefined" ? self : this);

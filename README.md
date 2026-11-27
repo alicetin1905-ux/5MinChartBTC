@@ -32,7 +32,9 @@ De workflow `.github/workflows/btc5m-schedule.yml` draait elke 15 minuten via Gi
 Actions `python -m btc5m run`. Daarna:
 
 - staat de samenvatting bij elke run in het tabblad **Actions** (job summary);
-- komen de rapporten op de aparte branch **`btc-reports`**:
+- komen de rapporten op de aparte branch **`btc-reports`**. Die branch wordt elke run vervangen door
+  één verse commit, zodat de repository niet ongemerkt groeit; de groeiende datasets
+  (`history.csv`, `orderflow.csv`, `book.csv`) gaan elke keer mee:
   - `latest.md` en `latest.json`: de meest recente analyse;
   - `agent.md`: de interpretatie door Claude (alleen als die is ingeschakeld, zie hieronder);
   - `history.csv`: één regel per run; volgende runs toetsen deze voorspellingen en leren ervan;
@@ -89,6 +91,7 @@ daarna echt gebeurde, en past zich daarop aan (`btc5m/learn.py`):
 | **Kalibratie per band** (`c50`, `c90` → `k50`, `k90`) | Hoe ver lag de koers na 60 min werkelijk van de mediaan, gemeten in de voorspelde volatiliteit? Dit wordt apart bepaald voor de 50%- en de 90%-band, eerst uit 30 dagen candles en daarna steeds meer uit het eigen track record. | BTC heeft dikke staarten: meestal rustig, af en toe een sprong. Daarom worden de banden apart gerekt of gekrompen, zodat beide kloppen |
 | **Volatiliteit per uur** | Variantie per uur van de dag, apart voor werkdag en weekend (met krimp naar het gemiddelde) | Banden zijn breder rond de Amerikaanse opening (13–15 uur UTC, ongeveer ×1,5) en smaller 's nachts en in het weekend (ongeveer ×0,85) |
 | **Vertrouwen in de richting** (`dir_scale`) | Hoe goed voorspelden eerdere kansen de echte richting (backtest + eigen track record)? | De ruwe kans wordt naar 50% getrokken als het model weinig voorspelt |
+| **Macro-agenda** (`events.csv`) | Op het moment van CPI-cijfers, banenrapporten en Fed-besluiten beweegt BTC veel harder. Het model leert uit eerdere publicaties hoeveel harder: op 5 publicaties in okt–nov 2026 was de variantie in de publicatie-candle gemiddeld ~29× normaal (mediaan ~7×). | Banden worden rond zo'n moment automatisch breder. In een leave-one-out test steeg de log-likelihood van voorspellingen met een macro-moment van 2,54 naar 3,17. Vul de agenda aan met de officiële planning (bls.gov, federalreserve.gov) |
 | **Orderflow** | Elke run slaat de verhouding agressieve kopers/verkopers, open interest, de long/short-verhouding en een momentopname van het orderboek op (`orderflow.csv`, `book.csv`). OKX bewaart die data zelf maar 8 tot 48 uur. | Na ongeveer 7 dagen volgt automatisch een eerlijke walk-forward test: voegt orderflow iets toe aan het richtingsmodel? |
 | **Model** | Wordt elke run opnieuw getraind op de nieuwste ~30 dagen | Past zich aan nieuwe marktomstandigheden aan |
 
@@ -102,6 +105,16 @@ daarna echt gebeurde, en past zich daarop aan (`btc5m/learn.py`):
 De volatiliteit per uur verbeterde daarnaast de log-likelihood van de 60m-bewegingen
 van 3,757 naar 3,805.
 
+**Getest en niet ingebouwd:** een extra factor rond de funding-momenten (00:00, 08:00 en 16:00 UTC).
+Na correctie voor het uur was de variantie daar ×1,10 (trainingsperiode) en ×1,04 (testperiode),
+en dat valt binnen de ruis.
+
+**Scorebord:** elke getoetste voorspelling krijgt een *weighted interval score*. Die bestraft
+zowel te brede banden als uitkomsten buiten de band. De score wordt vergeleken met een naïeve band:
+de spreiding van de 60m-bewegingen in de 24 uur ervoor. Het dashboard toont per dag hoeveel beter
+het model is dan naïef, per modelversie (`model_version` in `history.csv`). Zo kun je elke
+aanpassing objectief beoordelen.
+
 Bij de eerste run speelt hij de afgelopen 14 dagen terug, zodat hij meteen een track record
 heeft. Leren betekent hier vooral **eerlijker worden over onzekerheid**, niet dat hij de
 richting gaandeweg beter gaat voorspellen.
@@ -110,7 +123,7 @@ richting gaandeweg beter gaat voorspellen.
 
 | Onderdeel | Inhoud |
 |---|---|
-| Data | OKX `BTC-USDT-SWAP` (standaard) of Binance `BTCUSDT` perpetual, alleen afgesloten 5m candles, plus funding rate, premium en open interest |
+| Data | OKX `BTC-USDT-SWAP` (standaard); reserve: Kraken Futures `PF_XBTUSD` (perpetual), dan Coinbase `BTC-USD` (spot); Binance `BTCUSDT` alleen handmatig, alleen afgesloten 5m candles, plus funding rate, premium en open interest |
 | Indicatoren | EMA 9/21/50/200, RSI14, MACD, Bollinger (%B en breedte), ATR14, dag-VWAP, volume z-score |
 | Context | trend op 15m en 1u, volatiliteitsregime (ATR-percentiel), steun/weerstand uit geclusterde swing-pivots |
 | Scorekaart | optelsom van trend-, momentum- en VWAP-signalen, met als uitkomst een bias (bullish … bearish) |

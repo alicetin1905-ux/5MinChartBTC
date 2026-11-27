@@ -159,3 +159,20 @@ def test_orderflow_test_collects_then_detects_signal():
     assert res["status"] == "getest"
     assert res["with_orderflow"]["accuracy"] > res["base"]["accuracy"] + 0.05
     assert "verbetert" in res["verdict"]
+
+
+def test_scoreboard_rewards_calibrated_bands():
+    from btc5m.learn import scoreboard
+    df = synthetic(3000, seed=12)
+    lc = np.log(df["close"])
+    sd = float((lc - lc.shift(12)).std())
+    t = df.index[400:-12:6]
+    price = df["close"].loc[t].to_numpy()
+    real = df["close"].shift(-12).loc[t].to_numpy()
+    def rows(scale):
+        q = {f"p{p:02d}_60m": price * np.exp(z * sd * scale) for p, z in
+             [(5, -1.6449), (25, -0.6745), (50, 0.0), (75, 0.6745), (95, 1.6449)]}
+        return pd.DataFrame({"candle_time": t, "price": price, "realized_60m": real, "source": "okx", **q})
+    good, bad = scoreboard(rows(1.0), df), scoreboard(rows(3.0), df)
+    assert good["last7"]["skill"] > bad["last7"]["skill"]
+    assert 0.8 < good["last7"]["cov90"] <= 1.0 and bad["last7"]["cov90"] > 0.97

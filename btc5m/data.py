@@ -115,6 +115,39 @@ def fetch_derivatives_context(source: str = "okx") -> dict:
     return {}
 
 
+def fetch_orderflow(inst: str = "BTC-USDT-SWAP") -> pd.DataFrame:
+    """Orderflow per 5m van OKX (publiek). OKX bewaart dit maar 8-48 uur, dus de geplande run
+    slaat het elke keer op en bouwt zo een eigen, groeiende dataset op.
+    Kolommen: taker_buy, taker_sell (agressieve koop/verkoop), oi_ccy (open interest, BTC), ls_ratio."""
+    tv = _get(f"{OKX}/api/v5/rubik/stat/taker-volume-contract", {"instId": inst, "period": "5m", "limit": 100})["data"]
+    oi = _get(f"{OKX}/api/v5/rubik/stat/contracts/open-interest-history", {"instId": inst, "period": "5m", "limit": 100})["data"]
+    ls = _get(f"{OKX}/api/v5/rubik/stat/contracts/long-short-account-ratio", {"ccy": "BTC", "period": "5m"})["data"]
+    idx = lambda rows: pd.to_datetime([int(r[0]) for r in rows], unit="ms", utc=True)  # noqa: E731
+    f = pd.DataFrame({"taker_sell": [float(r[1]) for r in tv], "taker_buy": [float(r[2]) for r in tv]}, index=idx(tv))
+    f = f.join(pd.DataFrame({"oi_ccy": [float(r[2]) for r in oi]}, index=idx(oi)), how="outer")
+    f = f.join(pd.DataFrame({"ls_ratio": [float(r[1]) for r in ls]}, index=idx(ls)), how="outer")
+    now_bucket = pd.Timestamp.now(tz="UTC").floor("5min")
+    f = f[f.index < now_bucket]  # de lopende 5 minuten zijn nog niet compleet
+    f.index.name = "time"
+    return f.sort_index()
+
+
+def fetch_book_imbalance(inst: str = "BTC-USDT-SWAP") -> dict:
+    """Momentopname orderboek: (bied − laat) / (bied + laat) voor de 400 beste niveaus en binnen ±0,05%."""
+    b = _get(f"{OKX}/api/v5/market/books", {"instId": inst, "sz": 400})["data"][0]
+    bids = [(float(r[0]), float(r[1])) for r in b["bids"]]
+    asks = [(float(r[0]), float(r[1])) for r in b["asks"]]
+    mid = (bids[0][0] + asks[0][0]) / 2
+    imb = lambda bs, as_: (bs - as_) / (bs + as_) if bs + as_ else 0.0  # noqa: E731
+    near = lambda side, sign: sum(q for px, q in side if abs(px / mid - 1) <= 0.0005)  # noqa: E731
+    return {
+        "time": pd.Timestamp(int(b["ts"]), unit="ms", tz="UTC").isoformat(),
+        "mid": mid, "spread": asks[0][0] - bids[0][0],
+        "imbalance_400": round(imb(sum(q for _, q in bids), sum(q for _, q in asks)), 5),
+        "imbalance_5bp": round(imb(near(bids, 1), near(asks, -1)), 5),
+    }
+
+
 def load_csv(path: str) -> pd.DataFrame:
     """CSV met kolommen time/open/high/low/close/volume (bijv. eerder opgeslagen met `fetch`)."""
     df = pd.read_csv(path)

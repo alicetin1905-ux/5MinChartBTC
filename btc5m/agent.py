@@ -22,7 +22,7 @@ Dit is het betrouwbaarste onderdeel.
 Is de trefzekerheid niet duidelijk hoger dan `baseline_best` of de Brier-score >= 0.25, zeg dan expliciet dat de \
 richtingskans niet betrouwbaar is.
 6. Track record: vat `learning` samen - hoe goed klopten eerdere voorspellingen (trefzekerheid, Brier, \
-dekking van de 90%-band) en wat heeft het systeem daarvan geleerd (vol_scale, dir_scale). Vermeld het verschil \
+dekking van de 90%-band) en wat heeft het systeem daarvan geleerd (bandkalibratie c50/c90 met correctie k50/k90, dir_scale). Vermeld het verschil \
 tussen live en teruggespeelde (replay) voorspellingen.
 7. Twee of drie scenario's (bullish / bearish / zijwaarts) met concrete prijsniveaus uit de data en wat elk scenario \
 zou bevestigen of ontkrachten.

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 
-from .forecast import LAMBDA, DirectionModel, model_verdict, monte_carlo
+from .forecast import LAMBDA, DirectionModel, model_verdict, monte_carlo, seasonal_factors
 from .learn import apply_dir_scale, calibrate, evaluate_history, evaluated_rows, recent_live, track_record
 from .signals import snapshot
 
@@ -24,8 +25,11 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
     model = DirectionModel(horizon=model_horizon)
     bt = model.walk_forward(df) if backtest else {}
     ev = evaluate_history(history if history is not None else pd.DataFrame(), df)
-    cal = calibrate(df, ev, getattr(model, "last_oos", None))
-    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"], vol_scale=cal["vol_scale"])
+    s2 = seasonal_factors(df)
+    cal = calibrate(df, ev, getattr(model, "last_oos", None), s2)
+    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"], season=s2,
+                     targets={"c50": cal["c50"], "c90": cal["c90"]})
+    cal["k50"], cal["k90"], cal["season_now"] = mc["k50"], mc["k90"], mc["season_now"]
     now = model.predict_now(df)
     now["p_up_raw"] = now["p_up"]
     now["p_up"] = apply_dir_scale(now["p_up_raw"], cal["dir_scale"])
@@ -33,7 +37,8 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
     extras = {
         "model": {
             "lambda": LAMBDA, "horizon_bars": model_horizon,
-            "vol_scale": cal["vol_scale"], "dir_scale": cal["dir_scale"],
+            "dir_scale": cal["dir_scale"], "c50": cal["c50"], "c90": cal["c90"],
+            "season": np.round(np.sqrt(s2), 4).tolist(), "sigma_des": mc.pop("sigma_des"),
             "z_sample": mc.pop("z_sample"), "direction": now.pop("params"),
             "generated_from": df.index[-1].isoformat(),
         },
@@ -97,8 +102,8 @@ def to_markdown(a: dict) -> str:
         L.append(f"- Open interest: {_f(d['open_interest_btc'], 0)} BTC (≈ ${d['open_interest_usd'] / 1e9:.2f} mld)\n")
 
     L.append("## Kansverdeling komende candles (Monte Carlo, drift-neutraal)")
-    L.append(f"Huidige 5m-volatiliteit (EWMA, geleerde factor ×{mc['vol_scale']:.2f}): "
-             f"{mc['sigma_5m_pct']:.3f}% per candle.\n")
+    L.append(f"Verwachte 5m-volatiliteit nu: {mc['sigma_5m_pct']:.3f}% per candle (seizoensfactor dit uur "
+             f"×{mc['season_now']:.2f}); bandkalibratie 50% ×{mc['k50']:.2f}, 90% ×{mc['k90']:.2f}.\n")
     L.append("| Horizon | 5% | 25% | mediaan | 75% | 95% | gem. beweging |")
     L.append("|---|---|---|---|---|---|---|")
     for k, h in mc["horizons"].items():
@@ -141,10 +146,21 @@ def to_markdown(a: dict) -> str:
             cov50 = f", 50%-band {tr['coverage_50']:.0%} (doel 50%)" if "coverage_50" in tr else ""
             L.append(f"- Bandbreedte 60m getoetst op {tr['n_range']} voorspellingen: 90%-band raak in "
                      f"{tr['coverage_90']:.0%} (doel 90%){cov50}")
-        hist = c["vol_scale_from_history"]
-        L.append(f"- Geleerde volatiliteitsfactor: ×{c['vol_scale']:.2f} (candles ×{c['vol_scale_from_candles']:.2f}"
-                 + (f", eigen track record ×{hist:.2f} op n={c['n_history_range']}" if hist else "") + ")")
-        L.append(f"- Vertrouwen in richtingsmodel: {c['dir_scale']:.2f} (0 = negeren, 1 = ruwe kans klopt)\n")
+        hist = c["c90_history"]
+        L.append(f"- Geleerde bandafstanden (in σ): 50% {c['c50']:.2f}, 90% {c['c90']:.2f} "
+                 f"(candles {c['c50_candles']:.2f}/{c['c90_candles']:.2f}"
+                 + (f", eigen track record {c['c50_history']:.2f}/{hist:.2f} op n={c['n_history_range']}" if hist else "")
+                 + f") → correctie 50%-band ×{c['k50']:.2f}, 90%-band ×{c['k90']:.2f}")
+        L.append(f"- Vertrouwen in richtingsmodel: {c['dir_scale']:.2f} (0 = negeren, 1 = ruwe kans klopt)")
+        of = lr.get("orderflow") or {}
+        if of.get("status") == "verzamelen":
+            L.append(f"- Orderflow: {of.get('bars', 0)} van {of.get('needed', 2000)} candles verzameld "
+                     f"({of.get('days', 0)} dagen); test volgt zodra er genoeg is")
+        elif of.get("status") == "getest":
+            b0, b1 = of["base"], of["with_orderflow"]
+            L.append(f"- Orderflow-test ({of['days']} dagen): trefzekerheid {b0['accuracy']:.1%} → {b1['accuracy']:.1%}, "
+                     f"Brier {b0['brier']:.4f} → {b1['brier']:.4f}: {of['verdict']}")
+        L.append("")
 
     L.append(f"_Data: {a['candles']} candles, {a['data_from'][:16]} → {a['data_to'][:16]} UTC. {a['disclaimer']}_")
     return "\n".join(L)

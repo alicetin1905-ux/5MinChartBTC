@@ -4,6 +4,7 @@ Schrijft naar `outdir`:
 - latest.json / latest.md  : volledige analyse van deze run
 - candles.json             : laatste 800 5m candles (het dashboard rekent hier live op verder)
 - model.json / evaluated.json : modelparameters en getoetste voorspellingen voor het dashboard
+- orderflow.csv / book.csv : zelf verzamelde orderflow (OKX bewaart die maar 8-48 uur)
 - agent.md                 : Claude-interpretatie (als ingeschakeld en gelukt)
 - history.csv              : één regel per run; volgende runs toetsen deze voorspellingen en
                              leren daarvan (zie learn.py)
@@ -19,12 +20,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from .data import fetch_candles, fetch_derivatives_context
+from .data import fetch_book_imbalance, fetch_candles, fetch_derivatives_context, fetch_orderflow
+from .learn import orderflow_test
 from .report import analyse, to_markdown
 
 HISTORY_FIELDS = ["generated_at", "candle_time", "source", "price", "bias", "score", "volatility_regime",
                   "sigma_5m_pct", "p_up", "p_up_raw", "model_horizon_min", "p05_60m", "p25_60m", "p50_60m",
-                  "p75_60m", "p95_60m", "vol_scale", "dir_scale", "funding_rate", "oos_accuracy", "oos_baseline"]
+                  "p75_60m", "p95_60m", "vol_scale", "dir_scale", "sd60", "k50", "k90", "funding_rate", "oos_accuracy", "oos_baseline"]
 
 
 def _history_row(a: dict, source: str) -> dict:
@@ -36,7 +38,8 @@ def _history_row(a: dict, source: str) -> dict:
         "volatility_regime": s["volatility_regime"], "sigma_5m_pct": round(mc["sigma_5m_pct"], 4),
         "p_up": round(dm["p_up"], 4), "p_up_raw": round(dm["p_up_raw"], 4), "model_horizon_min": dm["horizon_min"],
         **{f"{q}_60m": round(h60.get(q, float("nan")), 1) for q in ("p05", "p25", "p50", "p75", "p95")},
-        "vol_scale": a["learning"]["calibration"]["vol_scale"],
+        "vol_scale": mc["vol_scale"], "sd60": round(mc["sd60"], 6),
+        "k50": mc["k50"], "k90": mc["k90"],
         "dir_scale": a["learning"]["calibration"]["dir_scale"],
         "funding_rate": a["derivatives"].get("funding_rate", ""),
         "oos_accuracy": round(bt["accuracy"], 4) if "accuracy" in bt else "",
@@ -71,6 +74,26 @@ def replay_history(df: pd.DataFrame, days: int = 14, every: int = 3, lookback: i
     return pd.DataFrame(rows, columns=HISTORY_FIELDS)
 
 
+def update_orderflow(out: Path, df: pd.DataFrame, source: str) -> dict:
+    """Verzamel orderflow (OKX bewaart maar 8-48 uur) in orderflow.csv/book.csv en test of het helpt."""
+    of_path, book_path = out / "orderflow.csv", out / "book.csv"
+    of = pd.read_csv(of_path, index_col=0, parse_dates=True) if of_path.exists() else pd.DataFrame()
+    if source == "okx":
+        try:
+            new = fetch_orderflow()
+            of = new.combine_first(of) if not of.empty else new
+            of = of.sort_index()
+            of.to_csv(of_path)
+            snap = fetch_book_imbalance()
+            pd.DataFrame([snap]).to_csv(book_path, mode="a", header=not book_path.exists(), index=False)
+        except Exception as err:  # verzamelen mag de analyse nooit laten mislukken
+            print(f"Orderflow ophalen mislukt: {err}", file=sys.stderr)
+    try:
+        return orderflow_test(df, of if not of.empty else None)
+    except Exception as err:
+        return {"status": "fout", "error": str(err)}
+
+
 def run_once(outdir: str, sources: list[str], bars: int = 8640, agent: str = "auto",
              backfill_days: int = 14) -> int:
     out = Path(outdir)
@@ -99,6 +122,7 @@ def run_once(outdir: str, sources: list[str], bars: int = 8640, agent: str = "au
     a = analyse(df, derivatives=fetch_derivatives_context(source), history=history)
     a["source"] = source
     extras = a.pop("extras")
+    a["learning"]["orderflow"] = update_orderflow(out, df, source)
     (out / "model.json").write_text(json.dumps(extras["model"]), encoding="utf-8")
     (out / "evaluated.json").write_text(json.dumps(extras["evaluated"]), encoding="utf-8")
     md = to_markdown(a)

@@ -94,9 +94,8 @@ async function loadStatic() {
   S.candles = candles.map(toCandle);
   try { S.model = await getJSON("model.json" + bust()); } catch { S.model = null; }
   try { S.evaluated = await getJSON("evaluated.json" + bust()); } catch { S.evaluated = []; }
-  const learnedVol = S.model?.vol_scale ?? latest.monte_carlo?.vol_scale ?? 1;
-  S.volScale = learnedVol;
-  $("volSlider").value = learnedVol;
+  S.volScale = 1; // extra handmatige factor bovenop de geleerde kalibratie
+  $("volSlider").value = 1;
   updateVolLabel();
   S.deriv = latest.derivatives || null;
   S.needsRecompute = true;
@@ -202,6 +201,7 @@ function recompute() {
   const c = S.candles;
   if (c.length < 260) return;
   S.ind = E.indicators(c);
+  S.sigDes = S.model?.season ? E.deseasonalizedSigma(c, S.model.season) : null;
   const last = c.length - 1;
   S.closedIdx = c[last].t + STEP > Date.now() ? last - 1 : last;
   S.feat = E.features(c, S.ind, last);
@@ -225,9 +225,13 @@ function zSample() {
 function runSimulation(animated) {
   if (!S.ind) return;
   const s0 = S.candles[S.candles.length - 1].c;
-  const sigma = S.ind.sigma[S.closedIdx];
-  const sim = E.simulate({ s0, sigma, volScale: S.volScale, z: zSample(), H: S.H, nPaths: S.nPaths, seed: (Date.now() / 1000) | 0 });
-  sim.sigEff = sigma * S.volScale;
+  const season = S.model?.season || null;
+  const sigma = S.sigDes ? S.sigDes[S.closedIdx] : S.ind.sigma[S.closedIdx];
+  const stepScale = E.stepScales(S.candles[S.closedIdx].t, S.H, season);
+  const targets = S.model?.c50 ? { c50: S.model.c50, c90: S.model.c90 } : null;
+  const sim = E.simulate({ s0, sigma, volScale: S.volScale, z: zSample(), H: S.H, nPaths: S.nPaths,
+    seed: (Date.now() / 1000) | 0, stepScale, targets });
+  sim.sigma = sigma; sim.seasonNow = stepScale[0]; sim.sigEff = sigma * S.volScale * stepScale[0];
   const bands = E.bands(sim);
   if (animated) burstParticles();
   if (!animated || reduceMotion) {
@@ -500,7 +504,7 @@ function drawParticles(ctx, now, sim, xf, y, L) {
   while (PART.list.length < want) { const p = {}; spawnParticle(p, now, sim, "initial"); PART.list.push(p); }
   PART.list.length = want;
   if (PART.burst) { for (const p of PART.list) spawnParticle(p, now, sim, "burst"); PART.burst = false; }
-  const H = sim.H, s0 = sim.s0, sd = (sim.sigEff || 0.0015) * Math.sqrt(H);
+  const H = sim.H, s0 = sim.s0, sd = sim.sdSteps ? sim.sdSteps[H - 1] : (sim.sigEff || 0.0015) * Math.sqrt(H);
   const edge = (j) => s0 * Math.exp(((j / NB) * 2 - 1) * ZR * sd);
   const xEnd = xf(H) + L.fw * 0.5, maxW = Math.max(28, (xEnd - xf(0)) * 0.42);
 
@@ -680,15 +684,56 @@ function renderMC(prog) {
   const steps = [...document.querySelectorAll("#mcSteps li")];
   const active = prog < .1 ? 1 : prog < .2 ? 2 : prog < 1 ? 3 : 4;
   steps.forEach((li, k) => li.classList.toggle("active", S.anim ? k + 1 === active : false));
-  const sigma = S.ind.sigma[S.closedIdx];
-  $("mcSigma").textContent = `σ = ${NF(3).format(sigma * 100)}% per candle (λ = 0,94)`;
-  $("mcScale").textContent = `${NF(3).format(sigma * 100)}% × ${NF(2).format(S.volScale)} = ${NF(3).format(sigma * S.volScale * 100)}%`;
+  const sigma = sim.sigma ?? S.ind.sigma[S.closedIdx], sn = sim.seasonNow ?? 1;
+  $("mcSigma").textContent = S.model?.season
+    ? `σ̃ = ${NF(3).format(sigma * 100)}% (zonder tijdseffect) × ${NF(2).format(sn)} (dit uur) = ${NF(3).format(sigma * sn * 100)}% per candle`
+    : `σ = ${NF(3).format(sigma * 100)}% per candle (λ = 0,94)`;
+  renderSeason();
+  $("mcScale").textContent = sim.k50 !== undefined && S.model?.c50
+    ? `50%-band ×${NF(2).format(sim.k50)} · 90%-band ×${NF(2).format(sim.k90)} (doel: ${NF(2).format(S.model.c50)}σ / ${NF(2).format(S.model.c90)}σ)`
+    : "nog geen geleerde kalibratie (volgende server-run)";
   $("mcHz").textContent = `over ${S.H * 5} min`;
   $("mcResult").textContent = `90%: ${usd(q05)} – ${usd(q95)} · mediaan ${usd(q50)}`;
   const status = S.anim && prog < 1
     ? `Simuleren: pad ${NF(0).format(count)} / ${NF(0).format(ends.length)} · stap ${Math.min(sim.H, Math.ceil(prog * sim.H * 1.15))} / ${sim.H}`
-    : `${NF(0).format(ends.length)} paden · ${sim.H * 5} min vooruit · volatiliteitsfactor ×${NF(2).format(S.volScale)}`;
+    : `${NF(0).format(ends.length)} paden · ${sim.H * 5} min vooruit · tijdseffect nu ×${NF(2).format(sim.seasonNow || 1)}${S.volScale !== 1 ? ` · extra ×${NF(2).format(S.volScale)}` : ""}`;
   $("simStatus").textContent = status;
+}
+
+// ------------------------------------------------------------------ volatiliteit per uur
+let seasonKey = "";
+function renderSeason() {
+  const svgEl = $("seasonChart"), season = S.model?.season;
+  if (!svgEl) return;
+  const now = new Date(), key = `${now.getHours()}-${now.getDay()}-${!!season}`;
+  if (key === seasonKey) return;
+  seasonKey = key;
+  svgEl.replaceChildren();
+  if (!season) { svgEl.append(sv("text", { x: 4, y: 30, "font-size": 11, fill: "var(--text-secondary)" }, "Beschikbaar na de volgende server-run.")); return; }
+  const W = svgEl.clientWidth || 300, H = 74, m = { l: 4, r: 4, t: 14, b: 16 };
+  svgEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const vals = [];
+  for (let h = 0; h < 24; h++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 30);
+    vals.push(season[E.seasonBucket(d.getTime())]);
+  }
+  const vmax = Math.max(...vals, 1.2), bw = (W - m.l - m.r) / 24;
+  const y = (v) => m.t + (1 - v / vmax) * (H - m.t - m.b);
+  svgEl.append(sv("line", { x1: m.l, x2: W - m.r, y1: y(1), y2: y(1), stroke: "var(--axis)" }));
+  svgEl.append(sv("text", { x: W - m.r, y: y(1) - 3, "text-anchor": "end", "font-size": 10, fill: "var(--text-secondary)" }, "gemiddeld = 1"));
+  vals.forEach((v, h) => {
+    const cur = h === now.getHours();
+    const g = sv("g", { tabindex: "0" });
+    g.append(sv("rect", { x: m.l + h * bw, y: m.t, width: bw, height: H - m.t - m.b, fill: "transparent" }));
+    g.append(sv("rect", { x: m.l + h * bw + 1, y: y(v), width: Math.max(1, bw - 2), height: H - m.b - y(v), rx: 2,
+      fill: "var(--series-1)", opacity: cur ? 1 : 0.45 }));
+    attachTip(g, [`${String(h).padStart(2, "0")}:00–${String((h + 1) % 24).padStart(2, "0")}:00 (lokale tijd)${cur ? " · nu" : ""}`,
+      ["volatiliteit t.o.v. gemiddeld", `×${NF(2).format(v)}`]]);
+    svgEl.append(g);
+    if (h % 6 === 0) svgEl.append(sv("text", { x: m.l + h * bw + 1, y: H - 3, "font-size": 10, fill: "var(--text-secondary)" }, `${h}:00`));
+  });
+  const dayType = [0, 6].includes(now.getUTCDay()) ? "weekend" : "werkdag";
+  svgEl.append(sv("text", { x: m.l, y: 10, "font-size": 10, fill: "var(--text-secondary)" }, `vandaag (${dayType}) · nu ×${NF(2).format(vals[now.getHours()])}`));
 }
 
 // ------------------------------------------------------------------ richtingsmodel-paneel
@@ -779,7 +824,7 @@ function renderIndicators() {
   const ss = $("sigmaSpark");
   const pts = sg.map((v, k) => `${(k / (sg.length - 1)) * 150},${38 - ((v - smin) / (smax - smin || 1)) * 34}`).join(" ");
   ss.replaceChildren(sv("polyline", { points: pts, fill: "none", stroke: "var(--series-1)", "stroke-width": 1.5, "vector-effect": "non-scaling-stroke" }));
-  $("sigmaVal").textContent = `${NF(3).format(sg[sg.length - 1])}% · ×${NF(2).format(S.volScale)} geleerd`;
+  $("sigmaVal").textContent = `${NF(3).format(sg[sg.length - 1])}% per candle`;
   // scorekaart
   const sc = S.sc, ul = $("votes");
   const prev = lastVotes;
@@ -813,7 +858,7 @@ function renderDist() {
   }
   const h60 = b[Math.min(12, sim.H)];
   $("band60").textContent = `${usd(h60.p05)} – ${usd(h60.p95)}`;
-  $("band60Sub").textContent = `${Math.min(12, sim.H) * 5} min · ${NF(0).format(sim.nPaths)} paden · ×${NF(2).format(S.volScale)}`;
+  $("band60Sub").textContent = `${Math.min(12, sim.H) * 5} min · ${NF(0).format(sim.nPaths)} paden · gekalibreerd per band`;
   renderFutures();
 }
 function renderFutures() {
@@ -869,8 +914,15 @@ function renderEval() {
   const tile = (label, value, sub) => { const t = el("div", { class: "tile" }); t.style.flex = "1 1 170px"; t.append(el("div", { class: "label" }, label), el("div", { class: "value" }, value), el("div", { class: "delta" }, sub)); box.append(t); };
   if (tr.n_direction) tile("Richting goed voorspeld", pct(tr.hit_rate), `${NF(0).format(tr.n_direction)} getoetst · ${tr.n_live} live`);
   if (tr.n_range) tile("Koers binnen 90%-band", pct(tr.coverage_90, 0), "doel 90%");
-  if (cal.vol_scale) tile("Geleerde bandbreedtefactor", `×${NF(2).format(cal.vol_scale)}`, cal.vol_scale > 1.02 ? "banden verbreed" : cal.vol_scale < 0.98 ? "banden versmald" : "geen correctie");
+  if (cal.k50 !== undefined) tile("Kalibratie 50%- / 90%-band", `×${NF(2).format(cal.k50)} / ×${NF(2).format(cal.k90)}`,
+    `geleerde afstanden ${NF(2).format(cal.c50)}σ / ${NF(2).format(cal.c90)}σ`);
+  else if (cal.vol_scale) tile("Geleerde bandbreedtefactor", `×${NF(2).format(cal.vol_scale)}`, "oude kalibratie");
   if (cal.dir_scale !== undefined) tile("Vertrouwen in richtingskans", NF(2).format(cal.dir_scale), "0 = negeren · 1 = volledig");
+  const of = S.latest?.learning?.orderflow;
+  if (of?.status === "verzamelen") tile("Orderflow-data verzameld", `${NF(1).format(of.days || 0)} van ${NF(0).format((of.needed || 2000) / 288)} dagen`,
+    "eerlijke test volgt zodra er genoeg data is");
+  else if (of?.status === "getest") tile("Orderflow-test", `${pct(of.base.accuracy)} → ${pct(of.with_orderflow.accuracy)}`,
+    `${of.verdict} (${NF(1).format(of.days)} dagen)`);
 }
 
 function attachTip(node, lines) {
@@ -998,8 +1050,7 @@ $("overlays").addEventListener("click", (e) => {
   b.setAttribute("aria-pressed", on); S.overlays[b.dataset.k] = on; S.dirty = true;
 });
 function updateVolLabel() {
-  const learned = S.model?.vol_scale ?? S.latest?.monte_carlo?.vol_scale ?? 1;
-  $("volVal").textContent = `×${NF(2).format(S.volScale)}${Math.abs(S.volScale - learned) < 0.005 ? " (geleerd)" : ""}`;
+  $("volVal").textContent = `×${NF(2).format(S.volScale)}${Math.abs(S.volScale - 1) < 0.005 ? " (geen extra)" : " extra"}`;
 }
 let volTimer = null;
 $("volSlider").addEventListener("input", (e) => {

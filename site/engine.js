@@ -119,27 +119,68 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  /** Simuleer `nPaths` paden van `H` stappen. Geeft Float64Array per stap met prijzen. */
-  function simulate({ s0, sigma, volScale = 1, z, H, nPaths, seed = 7, lam = LAMBDA }) {
+  // ---- seizoensvolatiliteit (zie forecast.seasonal_factors) ---------------
+  function seasonBucket(t) { const d = new Date(t), wd = d.getUTCDay(); return d.getUTCHours() + ((wd === 0 || wd === 6) ? 24 : 0); }
+  /** EWMA-σ op rendementen gedeeld door de seizoensfactor van hun uur (season = σ-factoren, lengte 48). */
+  function deseasonalizedSigma(c, season) {
+    const lr = c.map((d, i) => (i ? Math.log(d.c / c[i - 1].c) / season[seasonBucket(d.t)] : NaN));
+    return ewmaSigma(lr);
+  }
+  function stepScales(lastT, H, season) {
+    const out = [];
+    for (let t = 1; t <= H; t++) out.push(season ? season[seasonBucket(lastT + t * 300000)] : 1);
+    return out;
+  }
+
+  /** Simuleer `nPaths` paden van `H` stappen (paths[t][k]); optioneel seizoen per stap en bandkalibratie. */
+  function simulate({ s0, sigma, volScale = 1, z, H, nPaths, seed = 7, lam = LAMBDA, stepScale = null, targets = null }) {
     const rnd = mulberry32(seed), var0 = (sigma * volScale) ** 2;
+    const sc = stepScale || new Array(H).fill(1);
     const paths = Array.from({ length: H + 1 }, () => new Float64Array(nPaths));
-    const hi = new Float64Array(nPaths).fill(s0), lo = new Float64Array(nPaths).fill(s0);
-    const hiAt = [], loAt = [];
     paths[0].fill(s0);
     const varT = new Float64Array(nPaths).fill(var0), logp = new Float64Array(nPaths);
     for (let t = 1; t <= H; t++) {
+      const s = sc[t - 1];
       for (let k = 0; k < nPaths; k++) {
-        const shock = z[(rnd() * z.length) | 0] * Math.sqrt(varT[k]);
-        logp[k] += shock - 0.5 * varT[k];
-        varT[k] = lam * varT[k] + (1 - lam) * shock * shock;
-        const p = s0 * Math.exp(logp[k]);
-        paths[t][k] = p;
-        if (p > hi[k]) hi[k] = p;
-        if (p < lo[k]) lo[k] = p;
+        const zz = z[(rnd() * z.length) | 0];
+        const shock = zz * Math.sqrt(varT[k]) * s;
+        logp[k] += shock - 0.5 * varT[k] * s * s;
+        varT[k] = lam * varT[k] + (1 - lam) * zz * zz * varT[k];
+        paths[t][k] = s0 * Math.exp(logp[k]);
       }
+    }
+    const sdSteps = []; let acc = 0;
+    for (let t = 0; t < H; t++) { acc += sc[t] * sc[t]; sdSteps.push(Math.sqrt(var0 * acc)); }
+    let k = { k50: 1, k90: 1 };
+    if (targets) k = calibratePaths(paths, sdSteps, targets.c50, targets.c90);
+    // maxima/minima tot en met elke stap (voor raakkansen)
+    const hi = Float64Array.from(paths[0]), lo = Float64Array.from(paths[0]), hiAt = [], loAt = [];
+    for (let t = 1; t <= H; t++) {
+      const col = paths[t];
+      for (let q = 0; q < nPaths; q++) { if (col[q] > hi[q]) hi[q] = col[q]; if (col[q] < lo[q]) lo[q] = col[q]; }
       hiAt.push(Float64Array.from(hi)); loAt.push(Float64Array.from(lo));
     }
-    return { paths, hiAt, loAt, s0, H, nPaths };
+    return { paths, hiAt, loAt, s0, H, nPaths, sdSteps, k50: k.k50, k90: k.k90 };
+  }
+  /** Zie forecast.calibrate_paths: monotone rek per stap zodat 50%/90%-afstanden = c50/c90 (in σ). */
+  function calibratePaths(paths, sdSteps, c50, c90) {
+    let last = { k50: 1, k90: 1 };
+    for (let t = 1; t < paths.length; t++) {
+      const col = paths[t], sd = sdSteps[t - 1];
+      const med = quantiles(col, [0.5])[0];
+      const d = new Float64Array(col.length), ad = new Float64Array(col.length);
+      for (let q = 0; q < col.length; q++) { d[q] = Math.log(col[q] / med) / sd; ad[q] = Math.abs(d[q]); }
+      const [a50, a90] = quantiles(ad, [0.5, 0.9]);
+      const k50 = Math.min(2, Math.max(0.5, c50 / a50));
+      const k90 = Math.max(Math.min(2, Math.max(0.5, c90 / a90)), 0.7 * k50);
+      const span = Math.max(a90 - a50, 1e-9);
+      for (let q = 0; q < col.length; q++) {
+        const w = Math.min(1, Math.max(0, (ad[q] - a50) / span));
+        col[q] = med * Math.exp(d[q] * (k50 + (k90 - k50) * w) * sd);
+      }
+      last = { k50, k90 };
+    }
+    return last;
   }
   function quantiles(arr, qs) {
     const s = Float64Array.from(arr).sort();
@@ -227,7 +268,8 @@
     };
   }
 
-  const api = { LAMBDA, ema, indicators, ewmaSigma, features, direction, simulate, quantiles, bands, touchProb,
+  const api = { LAMBDA, ema, indicators, ewmaSigma, features, direction, simulate, calibratePaths, quantiles, bands, touchProb,
+    seasonBucket, deseasonalizedSigma, stepScales,
     scorecard, swingLevels, resample, mulberry32 };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BTC5M = api;
 })(typeof self !== "undefined" ? self : this);

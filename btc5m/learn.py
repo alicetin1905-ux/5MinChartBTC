@@ -2,10 +2,11 @@
 
 Twee dingen worden geleerd:
 
-1. **vol_scale** – hoe breed de Monte Carlo-banden moeten zijn. Doel: de 90%-band moet in
-   ~90% van de gevallen de werkelijke prijs na 60 min bevatten. Startpunt is een schatting
-   uit de candles zelf; naarmate er meer eigen (live) voorspellingen getoetst zijn, weegt het
-   eigen track record zwaarder.
+1. **Bandkalibratie (c50, c90)** – hoe ver de koers na 60 min werkelijk van de mediaan ligt, in
+   eenheden van de voorspelde volatiliteit, apart voor de 50%- en de 90%-band. BTC heeft dikke
+   staarten (meestal rustig, soms een sprong); één factor voor alles maakte de 50%-band te breed
+   en de 90%-band te smal. Startpunt is een schatting uit de candles (30 dagen); naarmate er meer
+   eigen live voorspellingen getoetst zijn, weegt het eigen track record zwaarder.
 2. **dir_scale** – hoeveel vertrouwen de richtingskans verdient. De ruwe kans p wordt
    p' = 0.5 + dir_scale·(p − 0.5). dir_scale = 0 betekent "het model voegt niets toe"
    (altijd 50%), 1 = de ruwe kans klopt. Geschat uit out-of-sample backtest + eigen track record.
@@ -18,10 +19,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .forecast import ewma_sigma
+from .forecast import deseasonalized_sigma, season_bucket
 
-Z90 = 1.6449  # 95e percentiel van de standaardnormale verdeling (90%-band tweezijdig)
-PRIOR_N = 100  # hoeveel "virtuele" waarnemingen de startschatting waard is
+Z50, Z90 = 0.6745, 1.6449  # standaardnormaal: 50%- en 90%-band (tweezijdig)
+PRIOR_N = 200  # hoeveel "virtuele" waarnemingen de startschatting waard is
 
 
 def _bar_close(candles: pd.DataFrame, t: pd.Timestamp) -> float | None:
@@ -82,30 +83,40 @@ def track_record(ev: pd.DataFrame) -> dict:
     return out
 
 
-def vol_scale_from_candles(candles: pd.DataFrame, horizon: int = 12) -> float:
-    """Hoe vaak lag de 60m-beweging buiten ±1.645·σ·√h? Geeft de factor waarmee σ moet."""
-    lr = np.log(candles["close"]).diff()
-    sigma = ewma_sigma(lr)
-    fwd = np.log(candles["close"]).shift(-horizon) - np.log(candles["close"])
-    z = (fwd / (sigma * np.sqrt(horizon))).replace([np.inf, -np.inf], np.nan).dropna()
-    z = z.iloc[300:]  # EWMA laten inlopen
+def band_targets_from_candles(candles: pd.DataFrame, s2: np.ndarray, horizon: int = 12) -> tuple[float, float]:
+    """Gestandaardiseerde 60m-afstanden |r60| / σ̂60 uit de candles: 50e en 90e percentiel."""
+    sig = deseasonalized_sigma(candles, s2).to_numpy()
+    s2b = s2[season_bucket(candles.index)]
+    cs = np.concatenate([[0.0], np.cumsum(s2b)])
+    n = len(candles)
+    fut = np.full(n, np.nan)
+    k = np.arange(max(0, n - horizon))
+    fut[k] = cs[k + 1 + horizon] - cs[k + 1]
+    lc = np.log(candles["close"].to_numpy())
+    r = np.full(n, np.nan)
+    r[: n - horizon] = lc[horizon:] - lc[: n - horizon]
+    denom = sig * np.sqrt(fut)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.abs(r / np.where(denom > 0, denom, np.nan))[300:]
+    z = z[np.isfinite(z)]
     if len(z) < 200:
-        return 1.0
-    return float(np.clip(np.quantile(np.abs(z), 0.90) / Z90, 0.6, 1.8))
+        return Z50, Z90
+    c50, c90 = np.quantile(z, [0.5, 0.9])
+    return float(c50), float(c90)
 
 
-def vol_scale_from_history(ev: pd.DataFrame) -> tuple[float | None, int]:
-    if ev.empty or not {"realized_60m", "p05_60m", "p50_60m", "p95_60m"} <= set(ev.columns):
-        return None, 0
-    r = ev.dropna(subset=["realized_60m", "p05_60m", "p95_60m"])
-    if len(r) < 10:
-        return None, len(r)
-    center = np.log(r["p50_60m"].astype(float))
-    half = (np.log(r["p95_60m"].astype(float)) - np.log(r["p05_60m"].astype(float))) / 2
-    used = r["vol_scale"].astype(float).fillna(1.0) if "vol_scale" in r else 1.0
-    # Afwijking uitgedrukt in "ongeschaalde" banden: zo telt een eerder toegepaste factor niet dubbel
-    u = np.abs(np.log(r["realized_60m"].astype(float)) - center) / half * used
-    return float(np.clip(np.quantile(u, 0.90), 0.6, 1.8)), len(r)
+def band_targets_from_history(ev: pd.DataFrame) -> tuple[float | None, float | None, int]:
+    """Dezelfde maat uit eigen getoetste voorspellingen (alleen rijen met opgeslagen sd60)."""
+    need = {"realized_60m", "p50_60m", "sd60"}
+    if ev.empty or not need <= set(ev.columns):
+        return None, None, 0
+    r = ev.dropna(subset=list(need))
+    r = r[r["sd60"].astype(float) > 0]
+    if len(r) < 20:
+        return None, None, len(r)
+    z = np.abs(np.log(r["realized_60m"].astype(float) / r["p50_60m"].astype(float))) / r["sd60"].astype(float)
+    c50, c90 = np.quantile(z, [0.5, 0.9])
+    return float(c50), float(c90), len(r)
 
 
 def dir_scale_fit(p: np.ndarray, y: np.ndarray) -> float:
@@ -116,10 +127,16 @@ def dir_scale_fit(p: np.ndarray, y: np.ndarray) -> float:
     return float(np.clip(np.sum(x * t) / denom, 0.0, 1.0)) if denom > 1e-9 else 0.0
 
 
-def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None) -> dict:
-    k_prior = vol_scale_from_candles(candles)
-    k_hist, n_hist = vol_scale_from_history(ev)
-    k = k_prior if k_hist is None else (PRIOR_N * k_prior + n_hist * k_hist) / (PRIOR_N + n_hist)
+def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None,
+              s2: np.ndarray | None = None) -> dict:
+    s2 = s2 if s2 is not None else np.ones(48)
+    c50_c, c90_c = band_targets_from_candles(candles, s2)
+    c50_h, c90_h, n_hist = band_targets_from_history(ev)
+    if c50_h is None:
+        c50, c90 = c50_c, c90_c
+    else:
+        c50 = (PRIOR_N * c50_c + n_hist * c50_h) / (PRIOR_N + n_hist)
+        c90 = (PRIOR_N * c90_c + n_hist * c90_h) / (PRIOR_N + n_hist)
 
     ps, ys = [], []
     if oos_pairs is not None:
@@ -135,9 +152,10 @@ def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None) 
     s = dir_scale_fit(np.concatenate(ps), np.concatenate(ys)) if ps else 0.5
 
     return {
-        "vol_scale": round(float(k), 4),
-        "vol_scale_from_candles": round(k_prior, 4),
-        "vol_scale_from_history": None if k_hist is None else round(k_hist, 4),
+        "c50": round(float(c50), 4), "c90": round(float(c90), 4),
+        "c50_candles": round(c50_c, 4), "c90_candles": round(c90_c, 4),
+        "c50_history": None if c50_h is None else round(c50_h, 4),
+        "c90_history": None if c90_h is None else round(c90_h, 4),
         "dir_scale": round(s, 4),
         "n_history_range": n_hist,
         "n_history_direction": int(len(d)),
@@ -182,3 +200,46 @@ def evaluated_rows(ev: pd.DataFrame, n: int = 400) -> list[dict]:
             d[c] = None if v is None or pd.isna(v) else round(float(v), 5 if c.startswith("p_up") else 2)
         out.append(d)
     return out
+
+
+def orderflow_features(df: pd.DataFrame, of: pd.DataFrame) -> pd.DataFrame:
+    """Orderflow-features op de candle-tijdas (alles bekend bij het sluiten van de candle)."""
+    j = of.reindex(df.index)
+    tot = j["taker_buy"] + j["taker_sell"]
+    buy3 = j["taker_buy"].rolling(3).sum()
+    tot3 = tot.rolling(3).sum()
+    loi = np.log(j["oi_ccy"])
+    f = pd.DataFrame(index=df.index)
+    f["of_taker"] = (j["taker_buy"] / tot.replace(0, np.nan)) - 0.5
+    f["of_taker3"] = (buy3 / tot3.replace(0, np.nan)) - 0.5
+    f["of_oi1"] = loi.diff().clip(-0.02, 0.02)
+    f["of_oi6"] = loi.diff(6).clip(-0.05, 0.05)
+    f["of_ls6"] = j["ls_ratio"].diff(6)
+    return f
+
+
+def orderflow_test(df: pd.DataFrame, of: pd.DataFrame | None, min_bars: int = 2000) -> dict:
+    """Voegt orderflow iets toe aan het richtingsmodel? Eerlijke walk-forward vergelijking,
+    pas zodra er genoeg verzamelde data is."""
+    from .forecast import DirectionModel
+
+    if of is None or of.empty:
+        return {"status": "verzamelen", "bars": 0, "needed": min_bars, "days": 0.0}
+    f = orderflow_features(df, of)
+    valid = f.notna().all(axis=1)
+    n = int(valid.sum())
+    out = {"bars": n, "needed": min_bars, "days": round(n / 288, 1),
+           "since": str(f.index[valid.to_numpy()][0])[:16] if n else None}
+    if n < min_bars:
+        return {"status": "verzamelen", **out}
+    sub = df.loc[f.index[valid.to_numpy()][0]:]
+    base = DirectionModel(3).walk_forward(sub)
+    ext = DirectionModel(3, extra=f).walk_forward(sub)
+    if "error" in base or "error" in ext:
+        return {"status": "verzamelen", **out}
+    better = ext["brier"] < base["brier"] - 0.0005 and ext["accuracy"] > base["accuracy"]
+    return {"status": "getest", **out,
+            "base": {"accuracy": base["accuracy"], "brier": base["brier"], "n": base["oos_predictions"]},
+            "with_orderflow": {"accuracy": ext["accuracy"], "brier": ext["brier"], "n": ext["oos_predictions"]},
+            "verdict": ("orderflow verbetert het model out-of-sample" if better
+                        else "orderflow voegt (nog) niets aantoonbaars toe")}

@@ -72,7 +72,7 @@ def test_too_little_data():
 
 # ---------------------------------------------------------------- zelflerend deel
 
-from btc5m.learn import dir_scale_fit, evaluate_history, track_record, vol_scale_from_history  # noqa: E402
+from btc5m.learn import band_targets_from_history, dir_scale_fit, evaluate_history, track_record  # noqa: E402
 from btc5m.scheduled import HISTORY_FIELDS, load_history, replay_history  # noqa: E402
 
 
@@ -83,16 +83,40 @@ def test_dir_scale_zero_for_useless_model_and_one_for_good_model():
     assert dir_scale_fit(p, rng.random(20000) < p) > 0.85            # kansen kloppen
 
 
-def test_vol_scale_learns_when_bands_too_narrow():
+def test_band_targets_learn_fat_tails_from_history():
     rng = np.random.default_rng(4)
-    n = 500
-    price = np.full(n, 100.0)
-    # band ±1% (90%), maar werkelijke bewegingen zijn twee keer zo groot
-    realized = 100 * np.exp(rng.normal(0, 2 * 0.01 / 1.6449, n))
-    ev = pd.DataFrame({"price": price, "p05_60m": 99.0, "p50_60m": 100.0, "p95_60m": 101.0,
-                       "vol_scale": 1.0, "realized_60m": realized})
-    k, cnt = vol_scale_from_history(ev)
-    assert cnt == n and 1.7 < k <= 1.8
+    n = 4000
+    # dikke staarten: Student-t(3) geschaald naar sd60 = 1%
+    z = rng.standard_t(3, n) / np.sqrt(3.0)
+    ev = pd.DataFrame({"p50_60m": 100.0, "sd60": 0.01, "realized_60m": 100 * np.exp(0.01 * z)})
+    c50, c90, cnt = band_targets_from_history(ev)
+    assert cnt == n
+    q50, q90 = np.quantile(np.abs(z), [0.5, 0.9])
+    assert abs(c50 - q50) < 1e-6 and abs(c90 - q90) < 1e-6
+    assert c90 / c50 > 1.6449 / 0.6745  # dikke staarten: verhouding groter dan bij een normale verdeling
+
+
+def test_calibration_hits_targets_and_stays_monotone():
+    from btc5m.forecast import monte_carlo
+    df = synthetic(2000)
+    mc = monte_carlo(df, n_paths=8000, targets={"c50": 0.5, "c90": 1.9})
+    h = mc["horizons"]["60m"]
+    sd = mc["sd60"]
+    half50 = (np.log(h["p75"]) - np.log(h["p25"])) / 2 / sd
+    half90 = (np.log(h["p95"]) - np.log(h["p05"])) / 2 / sd
+    assert abs(half50 - 0.5) < 0.05 and abs(half90 - 1.9) < 0.1
+    assert h["p05"] < h["p25"] < h["p50"] < h["p75"] < h["p95"]
+
+
+def test_seasonal_factors_detect_busy_hour():
+    from btc5m.forecast import seasonal_factors
+    df = synthetic(6000, seed=5)
+    r = np.log(df["close"]).diff().fillna(0).to_numpy()
+    busy = df.index.hour == 14
+    close = df["close"].to_numpy()[0] * np.exp(np.cumsum(np.where(busy, 3 * r, r)))
+    df2 = df.assign(close=close)
+    s2 = seasonal_factors(df2)
+    assert s2[14] > 2.0 and s2[3] < 1.0
 
 
 def test_replay_and_evaluation_on_synthetic_data():
@@ -117,3 +141,21 @@ def test_analyse_with_history_reports_track_record():
     a = analyse(df, history=hist)
     assert a["learning"]["track_record"]["n_direction"] > 0
     assert "Zelflerend" in to_markdown(a)
+
+
+def test_orderflow_test_collects_then_detects_signal():
+    from btc5m.learn import orderflow_test
+    df = synthetic(3200, seed=8)
+    assert orderflow_test(df, None)["status"] == "verzamelen"
+    rng = np.random.default_rng(1)
+    fwd = np.log(df["close"]).shift(-3) - np.log(df["close"])
+    signal = np.sign(fwd.fillna(0).to_numpy())
+    buy = 100 * (1 + 0.6 * signal + rng.normal(0, 0.3, len(df))).clip(0.05)
+    of = pd.DataFrame({"taker_buy": buy, "taker_sell": 100.0, "oi_ccy": 30000 + rng.normal(0, 5, len(df)),
+                       "ls_ratio": 2.5}, index=df.index)
+    short = orderflow_test(df, of.iloc[:500])
+    assert short["status"] == "verzamelen" and short["bars"] < 2000
+    res = orderflow_test(df, of)
+    assert res["status"] == "getest"
+    assert res["with_orderflow"]["accuracy"] > res["base"]["accuracy"] + 0.05
+    assert "verbetert" in res["verdict"]

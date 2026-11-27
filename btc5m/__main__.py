@@ -1,0 +1,59 @@
+"""Command line: `python -m btc5m analyse` / `python -m btc5m fetch`."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from .data import fetch_candles, fetch_derivatives_context, load_csv
+from .report import analyse, to_markdown
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="btc5m", description="Analyse van de BTC futures 5m chart")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("analyse", aliases=["analyze"], help="Volledige analyse + kansverwachting")
+    a.add_argument("--source", choices=["okx", "binance"], default="okx")
+    a.add_argument("--bars", type=int, default=3000, help="Aantal 5m candles (standaard 3000 ≈ 10 dagen)")
+    a.add_argument("--csv", help="Gebruik lokale CSV in plaats van live data")
+    a.add_argument("--horizons", default="1,3,6,12", help="Horizons in candles, bijv. 1,3,6,12")
+    a.add_argument("--model-horizon", type=int, default=3, help="Horizon richtingsmodel in candles")
+    a.add_argument("--no-backtest", action="store_true", help="Sla walk-forward backtest over (sneller)")
+    a.add_argument("--json", action="store_true", help="Geef JSON i.p.v. Markdown")
+    a.add_argument("--out", help="Schrijf het resultaat ook naar dit bestand")
+
+    f = sub.add_parser("fetch", help="Sla candles op als CSV")
+    f.add_argument("--source", choices=["okx", "binance"], default="okx")
+    f.add_argument("--bars", type=int, default=3000)
+    f.add_argument("--out", default="data/btc_5m.csv")
+
+    args = p.parse_args(argv)
+
+    if args.cmd == "fetch":
+        df = fetch_candles(args.bars, args.source)
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(args.out)
+        print(f"{len(df)} candles opgeslagen in {args.out} ({df.index[0]} → {df.index[-1]})")
+        return 0
+
+    if args.csv:
+        df, deriv = load_csv(args.csv), {}
+    else:
+        df = fetch_candles(args.bars, args.source)
+        deriv = fetch_derivatives_context(args.source)
+    horizons = tuple(int(x) for x in args.horizons.split(","))
+    result = analyse(df, horizons=horizons, model_horizon=args.model_horizon,
+                     derivatives=deriv, backtest=not args.no_backtest)
+    text = json.dumps(result, indent=2, ensure_ascii=False) if args.json else to_markdown(result)
+    print(text)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

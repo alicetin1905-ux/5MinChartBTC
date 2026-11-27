@@ -26,7 +26,7 @@ from .report import analyse, to_markdown
 
 HISTORY_FIELDS = ["generated_at", "candle_time", "source", "price", "bias", "score", "volatility_regime",
                   "sigma_5m_pct", "p_up", "p_up_raw", "model_horizon_min", "p05_60m", "p25_60m", "p50_60m",
-                  "p75_60m", "p95_60m", "vol_scale", "dir_scale", "sd60", "k50", "k90", "funding_rate", "oos_accuracy", "oos_baseline"]
+                  "p75_60m", "p95_60m", "vol_scale", "dir_scale", "sd60", "k50", "k90", "model_version", "funding_rate", "oos_accuracy", "oos_baseline"]
 
 
 def _history_row(a: dict, source: str) -> dict:
@@ -39,7 +39,7 @@ def _history_row(a: dict, source: str) -> dict:
         "p_up": round(dm["p_up"], 4), "p_up_raw": round(dm["p_up_raw"], 4), "model_horizon_min": dm["horizon_min"],
         **{f"{q}_60m": round(h60.get(q, float("nan")), 1) for q in ("p05", "p25", "p50", "p75", "p95")},
         "vol_scale": mc["vol_scale"], "sd60": round(mc["sd60"], 6),
-        "k50": mc["k50"], "k90": mc["k90"],
+        "k50": mc["k50"], "k90": mc["k90"], "model_version": a.get("model_version", ""),
         "dir_scale": a["learning"]["calibration"]["dir_scale"],
         "funding_rate": a["derivatives"].get("funding_rate", ""),
         "oos_accuracy": round(bt["accuracy"], 4) if "accuracy" in bt else "",

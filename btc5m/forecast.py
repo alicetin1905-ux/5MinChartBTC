@@ -13,6 +13,8 @@ Twee bewust gescheiden onderdelen:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -27,13 +29,66 @@ def ewma_sigma(logret: pd.Series, lam: float = LAMBDA) -> pd.Series:
     return np.sqrt(var)
 
 
+EVENTS_FILE = Path(__file__).resolve().parent.parent / "events.csv"
+
+
 def season_bucket(times: pd.DatetimeIndex) -> np.ndarray:
     """0-23 = UTC-uur op een werkdag, 24-47 = UTC-uur in het weekend."""
     return (times.hour + 24 * (times.dayofweek >= 5)).to_numpy()
 
 
-def seasonal_factors(df: pd.DataFrame, shrink: float = 200.0) -> np.ndarray:
+def load_events(path: str | Path | None = None) -> pd.DataFrame:
+    """Macro-agenda (events.csv): time_utc, name, impact. Tijden worden op 5 minuten afgerond."""
+    path = Path(path) if path else EVENTS_FILE
+    if not path.exists():
+        return pd.DataFrame(columns=["time", "name", "impact"])
+    ev = pd.read_csv(path, comment="#")
+    ev["time"] = pd.to_datetime(ev["time_utc"], utc=True).dt.floor("5min")
+    return ev[["time", "name", "impact"]].sort_values("time").reset_index(drop=True)
+
+
+def event_var_mult(times: pd.DatetimeIndex, vol: dict | None) -> np.ndarray:
+    """Variantie-vermenigvuldiger per candle: m0 in de candle van de publicatie, m1 in de 2 candles erna.
+    Middelgrote events (impact 2) krijgen de wortel van die factoren."""
+    mult = np.ones(len(times))
+    ev = (vol or {}).get("events")
+    if ev is None or len(ev) == 0:
+        return mult
+    m0, m1 = vol.get("m0", 1.0), vol.get("m1", 1.0)
+    pos = {t: k for k, t in enumerate(times)}
+    step = pd.Timedelta(minutes=5)
+    for t, imp in zip(ev["time"], ev["impact"]):
+        w = 1.0 if imp >= 3 else 0.5
+        for off, m in ((0, m0), (1, m1), (2, m1)):
+            k = pos.get(t + off * step)
+            if k is not None:
+                mult[k] *= m ** w
+    return mult
+
+
+def _vol(vol) -> dict:
+    """Accepteer een volatiliteitsprofiel-dict of alleen seizoensfactoren (ndarray)."""
+    if vol is None:
+        return {"s2": np.ones(48), "events": None}
+    if isinstance(vol, np.ndarray):
+        return {"s2": vol, "events": None}
+    return vol
+
+
+def event_mask(times: pd.DatetimeIndex, events: pd.DataFrame | None) -> np.ndarray:
+    """True voor candles in een event-venster (publicatie + 2 candles erna)."""
+    m = np.zeros(len(times), dtype=bool)
+    if events is None or len(events) == 0:
+        return m
+    ts = set()
+    for t in events["time"]:
+        ts.update(t + pd.Timedelta(minutes=5 * k) for k in range(3))
+    return np.array([t in ts for t in times])
+
+
+def seasonal_factors(df: pd.DataFrame, shrink: float = 200.0, events: pd.DataFrame | None = None) -> np.ndarray:
     """Variantie-verhouding per (uur, werkdag/weekend) t.o.v. het gemiddelde, met krimp naar 1.
+    Candles rond macro-publicaties tellen niet mee (die krijgen hun eigen factor).
 
     Een 60-dagen-test (schatten op de eerste helft, toetsen op de tweede) gaf hiermee betere
     voorspellingen van de bewegingsgrootte (log-likelihood 3,757 → 3,805) en een gelijkmatigere
@@ -41,25 +96,61 @@ def seasonal_factors(df: pd.DataFrame, shrink: float = 200.0) -> np.ndarray:
     """
     r = np.log(df["close"]).diff().fillna(0.0).to_numpy()
     b = season_bucket(df.index)
-    tot = float(np.mean(r ** 2)) or 1e-12
+    keep = ~event_mask(df.index, events)
+    tot = float(np.mean(r[keep] ** 2)) or 1e-12
     s2 = np.ones(48)
     for k in range(48):
-        m = b == k
+        m = (b == k) & keep
         n = int(m.sum())
         if n:
             s2[k] = (n * float(np.mean(r[m] ** 2)) / tot + shrink) / (n + shrink)
     return s2
 
 
-def deseasonalized_sigma(df: pd.DataFrame, s2: np.ndarray) -> pd.Series:
+def event_factors(df: pd.DataFrame, events: pd.DataFrame | None, s2: np.ndarray,
+                  prior_m0: float = 6.0, prior_m1: float = 1.5) -> dict:
+    """Leer uit eerdere macro-publicaties in de data hoe groot de beweging was (in variantie t.o.v.
+    normaal voor dat uur). Uitschieters worden op 50 afgekapt; krimp naar een voorzichtige startwaarde.
+    Op 5 publicaties (okt-nov 2026) was de publicatie-candle gemiddeld ~29× (mediaan ~7×) normaal."""
+    out = {"m0": prior_m0, "m1": prior_m1, "n_events": 0}
+    if events is None or len(events) == 0:
+        return out
+    r = np.log(df["close"]).diff() / np.sqrt(s2[season_bucket(df.index)])
+    sig = ewma_sigma(r)
+    z2 = ((r / sig.shift(1)) ** 2).clip(upper=50.0)
+    step = pd.Timedelta(minutes=5)
+    z0, z1 = [], []
+    for t in events["time"]:
+        if t in z2.index and t - step in z2.index and np.isfinite(z2.get(t, np.nan)):
+            z0.append(float(z2[t]))
+            z1 += [float(z2[t + k * step]) for k in (1, 2) if t + k * step in z2.index]
+    n = len(z0)
+    if n:
+        out["m0"] = (sum(z0) + 2 * prior_m0) / (n + 2)
+        out["m1"] = (sum(z1) + 4 * prior_m1) / (len(z1) + 4)
+        out["n_events"] = n
+    return out
+
+
+def volatility_profile(df: pd.DataFrame, events: pd.DataFrame | None = None) -> dict:
+    """Seizoen per uur + macro-factoren: alles wat de verwachte volatiliteit per candle bepaalt."""
+    s2 = seasonal_factors(df, events=events)
+    ef = event_factors(df, events, s2)
+    return {"s2": s2, "events": events, **ef}
+
+
+def deseasonalized_sigma(df: pd.DataFrame, vol) -> pd.Series:
+    v = _vol(vol)
     r = np.log(df["close"]).diff()
-    return ewma_sigma(r / np.sqrt(s2[season_bucket(df.index)]))
+    scale = v["s2"][season_bucket(df.index)] * event_var_mult(df.index, v)
+    return ewma_sigma(r / np.sqrt(scale))
 
 
-def step_scales(last_time: pd.Timestamp, H: int, s2: np.ndarray) -> np.ndarray:
-    """Seizoensfactor (σ-schaal) voor elke toekomstige stap 1..H."""
+def step_scales(last_time: pd.Timestamp, H: int, vol) -> np.ndarray:
+    """σ-schaal voor elke toekomstige stap 1..H: seizoen van dat uur × eventuele macro-factor."""
+    v = _vol(vol)
     times = pd.DatetimeIndex([last_time + pd.Timedelta(minutes=5 * t) for t in range(1, H + 1)])
-    return np.sqrt(s2[season_bucket(times)])
+    return np.sqrt(v["s2"][season_bucket(times)] * event_var_mult(times, v))
 
 
 def calibrate_paths(paths: np.ndarray, sd_steps: np.ndarray, c50: float, c90: float) -> tuple[np.ndarray, dict]:
@@ -85,24 +176,23 @@ def calibrate_paths(paths: np.ndarray, sd_steps: np.ndarray, c50: float, c90: fl
 
 def monte_carlo(df: pd.DataFrame, horizons=(1, 3, 6, 12), n_paths: int = 20000,
                 touch_pct=(0.25, 0.5, 1.0), levels: dict | None = None, seed: int = 7,
-                vol_scale: float = 1.0, season: np.ndarray | None = None,
-                targets: dict | None = None) -> dict:
+                vol_scale: float = 1.0, season=None, targets: dict | None = None) -> dict:
     """Filtered Historical Simulation met
-    - `season`: variantie-factoren per uur (zie seasonal_factors); None = geen seizoen;
+    - `season`: volatiliteitsprofiel (zie volatility_profile) of alleen uurfactoren; None = vlak;
     - `targets`: geleerde gestandaardiseerde bandafstanden {"c50", "c90"} (zie learn.calibrate);
     - `vol_scale`: extra handmatige factor (standaard 1).
     """
     close = df["close"]
-    s2 = season if season is not None else np.ones(48)
-    sigma = deseasonalized_sigma(df, s2)
-    r_des = np.log(close).diff() / np.sqrt(s2[season_bucket(df.index)])
+    v = _vol(season)  # seizoensfactoren (ndarray) of volledig volatiliteitsprofiel (dict)
+    sigma = deseasonalized_sigma(df, v)
+    r_des = np.log(close).diff() / np.sqrt(v["s2"][season_bucket(df.index)] * event_var_mult(df.index, v))
     z = (r_des / sigma.shift(1)).replace([np.inf, -np.inf], np.nan).dropna().tail(5000).to_numpy()
     z = (z - z.mean()) / z.std()  # drift en schaal neutraliseren
 
     rng = np.random.default_rng(seed)
     H = max(horizons)
     s0 = float(close.iloc[-1])
-    sc = step_scales(df.index[-1], H, s2)
+    sc = step_scales(df.index[-1], H, v)
     var0 = float(sigma.iloc[-1]) ** 2 * vol_scale ** 2
     var_t = np.full(n_paths, var0)
     logp = np.zeros((n_paths, H + 1))

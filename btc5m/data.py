@@ -1,8 +1,10 @@
 """Ophalen van 5-minuten candles en derivatencontext voor BTC perpetual futures.
 
 Bronnen (publieke endpoints, geen API-key nodig):
-- okx     : BTC-USDT-SWAP (standaard)
-- binance : BTCUSDT USDⓈ-M perpetual (niet bereikbaar vanuit sommige landen/cloud-regio's)
+- okx      : BTC-USDT-SWAP (standaard)
+- kraken   : PF_XBTUSD perpetual van Kraken Futures (reserve; bereikbaar vanaf GitHub-servers)
+- coinbase : BTC-USD spot (laatste reserve; spot ligt dicht bij de perpetual, maar is geen future)
+- binance  : BTCUSDT USDⓈ-M perpetual (niet bereikbaar vanuit sommige landen/cloud-regio's)
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ import pandas as pd
 USER_AGENT = "btc5m-analyst/0.1"
 OKX = "https://www.okx.com"
 BINANCE = "https://fapi.binance.com"
+KRAKEN_F = "https://futures.kraken.com"
+COINBASE = "https://api.exchange.coinbase.com"
 
 
 def _get(url: str, params: dict | None = None, retries: int = 3) -> dict | list:
@@ -77,12 +81,48 @@ def fetch_binance(bars: int = 2000, symbol: str = "BTCUSDT") -> pd.DataFrame:
     return df.iloc[:-1].tail(bars)  # laatste candle is nog niet afgesloten
 
 
+def _closed(df: pd.DataFrame) -> pd.DataFrame:
+    """Laat de lopende (nog niet afgesloten) candle weg."""
+    return df[df.index + pd.Timedelta(minutes=5) <= pd.Timestamp.now(tz="UTC")]
+
+
+def fetch_kraken(bars: int = 2000, symbol: str = "PF_XBTUSD") -> pd.DataFrame:
+    rows: list[list] = []
+    end = int(time.time())
+    while len(rows) < bars + 1:
+        start = end - 2000 * 300
+        page = _get(f"{KRAKEN_F}/api/charts/v1/trade/{symbol}/5m", {"from": start, "to": end})["candles"]
+        if not page:
+            break
+        rows = [[c["time"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in page] + rows
+        end = start - 1
+        time.sleep(0.2)
+    df = _frame(rows, ["ts", "open", "high", "low", "close", "volume"])
+    return _closed(df).tail(bars)
+
+
+def fetch_coinbase(bars: int = 2000, product: str = "BTC-USD") -> pd.DataFrame:
+    rows: list[list] = []
+    end = pd.Timestamp.now(tz="UTC").floor("5min")
+    while len(rows) < bars + 1:
+        start = end - pd.Timedelta(minutes=5 * 299)
+        page = _get(f"{COINBASE}/products/{product}/candles",
+                    {"granularity": 300, "start": start.isoformat(), "end": end.isoformat()})
+        if not page:
+            break
+        # Coinbase: [time(s), low, high, open, close, volume], nieuwste eerst
+        rows += [[int(r[0]) * 1000, r[3], r[2], r[1], r[4], r[5]] for r in page]
+        end = start - pd.Timedelta(minutes=5)
+        time.sleep(0.15)
+    df = _frame(rows, ["ts", "open", "high", "low", "close", "volume"])
+    return _closed(df).tail(bars)
+
+
 def fetch_candles(bars: int = 2000, source: str = "okx") -> pd.DataFrame:
-    if source == "okx":
-        return fetch_okx(bars)
-    if source == "binance":
-        return fetch_binance(bars)
-    raise ValueError(f"Onbekende bron: {source}")
+    fetchers = {"okx": fetch_okx, "binance": fetch_binance, "kraken": fetch_kraken, "coinbase": fetch_coinbase}
+    if source not in fetchers:
+        raise ValueError(f"Onbekende bron: {source}")
+    return fetchers[source](bars)
 
 
 def fetch_derivatives_context(source: str = "okx") -> dict:
@@ -98,6 +138,15 @@ def fetch_derivatives_context(source: str = "okx") -> dict:
                 "premium": float(fr["premium"]) if fr.get("premium") else None,
                 "open_interest_btc": float(oi["oiCcy"]),
                 "open_interest_usd": float(oi["oiUsd"]),
+            }
+        if source == "kraken":
+            t = next(x for x in _get(f"{KRAKEN_F}/derivatives/api/v3/tickers")["tickers"] if x.get("symbol") == "PF_XBTUSD")
+            mark = float(t["markPrice"])
+            # Funding van Kraken heeft een andere eenheid dan OKX; liever weglaten dan verkeerd tonen
+            return {
+                "funding_rate": None,
+                "next_funding_time": None, "premium": float(t["markPrice"]) / float(t["indexPrice"]) - 1,
+                "open_interest_btc": float(t["openInterest"]), "open_interest_usd": float(t["openInterest"]) * mark,
             }
         if source == "binance":
             pi = _get(f"{BINANCE}/fapi/v1/premiumIndex", {"symbol": "BTCUSDT"})

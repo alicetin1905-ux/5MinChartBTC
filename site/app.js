@@ -201,7 +201,7 @@ function recompute() {
   const c = S.candles;
   if (c.length < 260) return;
   S.ind = E.indicators(c);
-  S.sigDes = S.model?.season ? E.deseasonalizedSigma(c, S.model.season) : null;
+  S.sigDes = S.model?.season ? E.deseasonalizedSigma(c, S.model.season, macroEv()) : null;
   const last = c.length - 1;
   S.closedIdx = c[last].t + STEP > Date.now() ? last - 1 : last;
   S.feat = E.features(c, S.ind, last);
@@ -212,6 +212,15 @@ function recompute() {
   S.levels = E.swingLevels(c, S.ind.atr14[last]);
   S.needsRecompute = false;
   S.dirty = true;
+}
+
+function macroEv() {
+  const m = S.model;
+  return m?.events?.length ? { events: m.events, m0: m.event_m0 ?? 6, m1: m.event_m1 ?? 1.5 } : null;
+}
+function nextEvent() {
+  const now = Date.now();
+  return (S.model?.events || []).find((e) => e.t + 15 * 60000 > now) || null;
 }
 
 function zSample() {
@@ -227,7 +236,7 @@ function runSimulation(animated) {
   const s0 = S.candles[S.candles.length - 1].c;
   const season = S.model?.season || null;
   const sigma = S.sigDes ? S.sigDes[S.closedIdx] : S.ind.sigma[S.closedIdx];
-  const stepScale = E.stepScales(S.candles[S.closedIdx].t, S.H, season);
+  const stepScale = E.stepScales(S.candles[S.closedIdx].t, S.H, season, macroEv());
   const targets = S.model?.c50 ? { c50: S.model.c50, c90: S.model.c90 } : null;
   const sim = E.simulate({ s0, sigma, volScale: S.volScale, z: zSample(), H: S.H, nPaths: S.nPaths,
     seed: (Date.now() / 1000) | 0, stepScale, targets });
@@ -453,6 +462,19 @@ function drawChart(now) {
       ctx.fillText(`95% ${usd(e.p95)}`, W - m.right - 4, y(e.p95) - 8);
       ctx.fillText(`5% ${usd(e.p05)}`, W - m.right - 4, y(e.p05) + 8);
       ctx.globalAlpha = 1;
+    }
+    // macro-moment binnen de horizon: verticale markering
+    const ne = nextEvent();
+    if (ne) {
+      const step = (ne.t - S.candles[S.closedIdx].t) / STEP;
+      if (step >= 1 && step <= sim.H) {
+        const xe = xf(step - 0.5);
+        ctx.strokeStyle = C["text-primary"]; ctx.globalAlpha = .5; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(Math.round(xe) + .5, m.top); ctx.lineTo(Math.round(xe) + .5, plotB); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+        ctx.lineWidth = 3; ctx.strokeStyle = C["surface-1"]; ctx.strokeText(`⚡ ${ne.name}`, xe + 4, m.top + 2);
+        ctx.fillStyle = C["text-primary"]; ctx.fillText(`⚡ ${ne.name}`, xe + 4, m.top + 2);
+      }
     }
     if (S.overlays.dots && !reduceMotion) drawParticles(ctx, now, sim, xf, y, L);
     ctx.restore();
@@ -689,6 +711,16 @@ function renderMC(prog) {
     ? `σ̃ = ${NF(3).format(sigma * 100)}% (zonder tijdseffect) × ${NF(2).format(sn)} (dit uur) = ${NF(3).format(sigma * sn * 100)}% per candle`
     : `σ = ${NF(3).format(sigma * 100)}% per candle (λ = 0,94)`;
   renderSeason();
+  const ne = nextEvent(), box = $("macroNext");
+  if (box) {
+    if (!ne) box.textContent = "Geen macro-moment in de agenda voor de komende 30 dagen.";
+    else {
+      const m0 = S.model?.event_m0 ?? 6;
+      const mins = Math.round((ne.t - Date.now()) / 60000);
+      const when = mins < 0 ? "nu bezig" : mins < 120 ? `over ${mins} min` : fmtDT.format(new Date(ne.t));
+      box.textContent = `⚡ Volgende macro-moment: ${ne.name} · ${when}. In die candle rekent het model met ×${NF(1).format(m0)} zoveel variantie (geleerd uit eerdere publicaties).`;
+    }
+  }
   $("mcScale").textContent = sim.k50 !== undefined && S.model?.c50
     ? `50%-band ×${NF(2).format(sim.k50)} · 90%-band ×${NF(2).format(sim.k90)} (doel: ${NF(2).format(S.model.c50)}σ / ${NF(2).format(S.model.c90)}σ)`
     : "nog geen geleerde kalibratie (volgende server-run)";
@@ -874,8 +906,8 @@ function renderFutures() {
     if (S.levels?.support[0]) add(`Kans steun ${usd(S.levels.support[0].v)}`, pct(E.touchProb(sim, step, S.levels.support[0].v), 0));
   }
   const d = S.deriv;
-  if (d && d.funding_rate !== undefined) {
-    add(`Funding rate${d.live ? " (live)" : ""}`, `${signed(d.funding_rate * 100, 4)} per 8 uur`);
+  if (d && d.open_interest_usd != null) {
+    if (d.funding_rate != null) add(`Funding rate${d.live ? " (live)" : ""}`, `${signed(d.funding_rate * 100, 4)} per 8 uur`);
     if (d.premium != null) add("Premium t.o.v. index", signed(d.premium * 100, 4));
     add("Open interest", `${NF(0).format(d.open_interest_btc)} BTC ≈ $${NF(2).format(d.open_interest_usd / 1e9)} mld`);
   }
@@ -918,6 +950,10 @@ function renderEval() {
     `geleerde afstanden ${NF(2).format(cal.c50)}σ / ${NF(2).format(cal.c90)}σ`);
   else if (cal.vol_scale) tile("Geleerde bandbreedtefactor", `×${NF(2).format(cal.vol_scale)}`, "oude kalibratie");
   if (cal.dir_scale !== undefined) tile("Vertrouwen in richtingskans", NF(2).format(cal.dir_scale), "0 = negeren · 1 = volledig");
+  const sb = S.latest?.learning?.scoreboard;
+  if (sb?.last7) tile("Vaardigheid laatste 7 dagen", `${sb.last7.skill >= 0 ? "+" : "−"}${pct(Math.abs(sb.last7.skill))}`,
+    `t.o.v. naïeve band · ${NF(0).format(sb.last7.n)} voorspellingen`);
+  drawSkillChart(sb?.daily || []);
   const of = S.latest?.learning?.orderflow;
   if (of?.status === "verzamelen") tile("Orderflow-data verzameld", `${NF(1).format(of.days || 0)} van ${NF(0).format((of.needed || 2000) / 288)} dagen`,
     "eerlijke test volgt zodra er genoeg data is");
@@ -973,6 +1009,46 @@ function drawBandChart(rows) {
   const first = new Date(rows[0].t), last = new Date(rows[rows.length - 1].t);
   svgEl.append(sv("text", { x: m.l, y: H - 5, "font-size": 11, fill: "var(--text-secondary)" }, fmtDT.format(first)));
   svgEl.append(sv("text", { x: W - m.r, y: H - 5, "text-anchor": "end", "font-size": 11, fill: "var(--text-secondary)" }, fmtDT.format(last)));
+}
+
+function drawSkillChart(daily) {
+  const svgEl = $("skillChart"); if (!svgEl) return;
+  svgEl.replaceChildren();
+  const W = svgEl.clientWidth || 600, H = 200, m = { l: 44, r: 12, t: 12, b: 24 };
+  svgEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  if (!daily.length) {
+    svgEl.append(sv("text", { x: W / 2, y: H / 2, "text-anchor": "middle", "font-size": 12, fill: "var(--text-secondary)" }, "Nog geen dagscores; die verschijnen na de eerste getoetste voorspellingen."));
+    return;
+  }
+  const vals = daily.map((d) => d.skill * 100);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const pad = Math.max(2, (hi - lo) * 0.12); lo -= pad; hi += pad;
+  const x = (k) => m.l + (daily.length === 1 ? (W - m.l - m.r) / 2 : (k / (daily.length - 1)) * (W - m.l - m.r));
+  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  for (const raw of niceTicks(lo, hi, 4)) {
+    const v = Math.abs(raw) < 1e-9 ? 0 : raw;
+    svgEl.append(sv("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? "var(--axis)" : "var(--grid)" }));
+    svgEl.append(sv("text", { x: m.l - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--text-secondary)" }, `${v > 0 ? "+" : v < 0 ? "−" : ""}${NF(0).format(Math.abs(v))}%`));
+  }
+  // modelversie-wissels
+  daily.forEach((d, k) => {
+    if (k && d.version !== daily[k - 1].version) {
+      svgEl.append(sv("line", { x1: x(k - 0.5), x2: x(k - 0.5), y1: m.t, y2: H - m.b, stroke: "var(--text-secondary)", opacity: .5 }));
+      svgEl.append(sv("text", { x: x(k - 0.5) + 4, y: m.t + 10, "font-size": 10, fill: "var(--text-secondary)" }, `model ${d.version}`));
+    }
+  });
+  svgEl.append(sv("polyline", { points: daily.map((d, k) => `${x(k)},${y(vals[k])}`).join(" "), fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round" }));
+  daily.forEach((d, k) => {
+    const g = sv("g", { tabindex: "0" });
+    g.append(sv("circle", { cx: x(k), cy: y(vals[k]), r: 12, fill: "transparent" }));
+    g.append(sv("circle", { cx: x(k), cy: y(vals[k]), r: 4, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }));
+    attachTip(g, [`${d.date} · model ${d.version}${d.live_share > 0 ? ` · ${pct(d.live_share, 0)} live` : " · teruggespeeld"}`,
+      ["vaardigheid", `${d.skill >= 0 ? "+" : "−"}${pct(Math.abs(d.skill))}`], ["voorspellingen", NF(0).format(d.n)],
+      ["50%- / 90%-band raak", `${pct(d.cov50, 0)} / ${pct(d.cov90, 0)}`]]);
+    svgEl.append(g);
+  });
+  svgEl.append(sv("text", { x: m.l, y: H - 5, "font-size": 11, fill: "var(--text-secondary)" }, daily[0].date));
+  svgEl.append(sv("text", { x: W - m.r, y: H - 5, "text-anchor": "end", "font-size": 11, fill: "var(--text-secondary)" }, daily[daily.length - 1].date));
 }
 
 function drawCalChart(rows) {

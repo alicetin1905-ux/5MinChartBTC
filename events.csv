@@ -1,0 +1,14 @@
+time_utc,name,impact
+# Macro-agenda: tijden in UTC. impact 3 = groot (CPI, banenrapport, FOMC), 2 = middel (bijv. PPI).
+# Bronnen: BLS-releasekalender (bls.gov/schedule) en de FOMC-planning. Controleer vóór gebruik: data kunnen verschuiven.
+# Verleden momenten blijven staan: daaruit leert het model hoe hard BTC op zulke momenten beweegt.
+2026-10-02 12:30,Banenrapport VS (sep),3
+2026-10-14 12:30,CPI VS (sep),3
+2026-10-28 18:00,FOMC-rentebesluit,3
+2026-11-06 13:30,Banenrapport VS (okt),3
+2026-11-10 13:30,CPI VS (okt),3
+2026-12-04 13:30,Banenrapport VS (nov),3
+2026-12-09 19:00,FOMC-rentebesluit,3
+2026-12-10 13:30,CPI VS (nov),3
+2027-01-08 13:30,Banenrapport VS (dec),3
+2027-01-13 13:30,CPI VS (dec),3

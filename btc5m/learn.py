@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .forecast import deseasonalized_sigma, season_bucket
+from .forecast import _vol, deseasonalized_sigma, event_var_mult, season_bucket
 
 Z50, Z90 = 0.6745, 1.6449  # standaardnormaal: 50%- en 90%-band (tweezijdig)
 PRIOR_N = 200  # hoeveel "virtuele" waarnemingen de startschatting waard is
@@ -83,10 +83,11 @@ def track_record(ev: pd.DataFrame) -> dict:
     return out
 
 
-def band_targets_from_candles(candles: pd.DataFrame, s2: np.ndarray, horizon: int = 12) -> tuple[float, float]:
+def band_targets_from_candles(candles: pd.DataFrame, vol, horizon: int = 12) -> tuple[float, float]:
     """Gestandaardiseerde 60m-afstanden |r60| / σ̂60 uit de candles: 50e en 90e percentiel."""
-    sig = deseasonalized_sigma(candles, s2).to_numpy()
-    s2b = s2[season_bucket(candles.index)]
+    v = _vol(vol)
+    sig = deseasonalized_sigma(candles, v).to_numpy()
+    s2b = v["s2"][season_bucket(candles.index)] * event_var_mult(candles.index, v)
     cs = np.concatenate([[0.0], np.cumsum(s2b)])
     n = len(candles)
     fut = np.full(n, np.nan)
@@ -127,10 +128,8 @@ def dir_scale_fit(p: np.ndarray, y: np.ndarray) -> float:
     return float(np.clip(np.sum(x * t) / denom, 0.0, 1.0)) if denom > 1e-9 else 0.0
 
 
-def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None,
-              s2: np.ndarray | None = None) -> dict:
-    s2 = s2 if s2 is not None else np.ones(48)
-    c50_c, c90_c = band_targets_from_candles(candles, s2)
+def calibrate(candles: pd.DataFrame, ev: pd.DataFrame, oos_pairs: tuple | None, vol=None) -> dict:
+    c50_c, c90_c = band_targets_from_candles(candles, vol)
     c50_h, c90_h, n_hist = band_targets_from_history(ev)
     if c50_h is None:
         c50, c90 = c50_c, c90_c
@@ -243,3 +242,51 @@ def orderflow_test(df: pd.DataFrame, of: pd.DataFrame | None, min_bars: int = 20
             "with_orderflow": {"accuracy": ext["accuracy"], "brier": ext["brier"], "n": ext["oos_predictions"]},
             "verdict": ("orderflow verbetert het model out-of-sample" if better
                         else "orderflow voegt (nog) niets aantoonbaars toe")}
+
+
+# ---------------------------------------------------------------- scorebord
+
+def _wis(y, m, l50, u50, l90, u90):
+    """Weighted interval score (lager = beter) voor mediaan + 50%- en 90%-interval.
+    Bestraft zowel te brede banden als uitkomsten buiten de band."""
+    def interval(lo, hi, a):
+        return (hi - lo) + 2 / a * np.maximum(lo - y, 0) + 2 / a * np.maximum(y - hi, 0)
+    return (0.5 * np.abs(y - m) + 0.25 * interval(l50, u50, 0.5) + 0.05 * interval(l90, u90, 0.1)) / 2.5
+
+
+def scoreboard(ev: pd.DataFrame, candles: pd.DataFrame) -> dict:
+    """Kwaliteit van de 60m-banden per dag, vergeleken met een naïeve band (spreiding van de 60m-
+    rendementen in de 24 uur ervoor, zonder seizoen, kalibratie of macro). Vaardigheid = 1 − WIS/WIS_naïef:
+    > 0 betekent beter dan naïef. Gebruikt alleen informatie die op het voorspelmoment bekend was."""
+    need = ["realized_60m", "price", "p05_60m", "p25_60m", "p50_60m", "p75_60m", "p95_60m"]
+    if ev.empty or not set(need) <= set(ev.columns):
+        return {"daily": [], "last7": None, "by_version": {}}
+    r = ev.dropna(subset=need).copy()
+    lc = np.log(candles["close"])
+    base_sd = (lc - lc.shift(12)).rolling(288, min_periods=200).std()
+    r["base_sd"] = base_sd.reindex(pd.DatetimeIndex(r["candle_time"])).to_numpy()
+    r = r.dropna(subset=["base_sd"])
+    if r.empty:
+        return {"daily": [], "last7": None, "by_version": {}}
+    rel = lambda col: np.log(r[col].astype(float).to_numpy() / r["price"].astype(float).to_numpy()) * 100  # noqa: E731
+    y = rel("realized_60m")
+    sd = r["base_sd"].to_numpy() * 100
+    r["wis"] = _wis(y, rel("p50_60m"), rel("p25_60m"), rel("p75_60m"), rel("p05_60m"), rel("p95_60m"))
+    r["wis_base"] = _wis(y, 0.0, -0.6745 * sd, 0.6745 * sd, -1.6449 * sd, 1.6449 * sd)
+    r["in50"] = (r["realized_60m"] >= r["p25_60m"]) & (r["realized_60m"] <= r["p75_60m"])
+    r["in90"] = (r["realized_60m"] >= r["p05_60m"]) & (r["realized_60m"] <= r["p95_60m"])
+    r["version"] = r["model_version"].fillna("v1") if "model_version" in r else "v1"
+    r["live"] = ~r["source"].astype(str).str.startswith("replay") if "source" in r else True
+    r["date"] = pd.DatetimeIndex(r["candle_time"]).strftime("%Y-%m-%d")
+
+    def agg(g):
+        return {"n": int(len(g)), "wis": round(float(g["wis"].mean()), 5), "wis_base": round(float(g["wis_base"].mean()), 5),
+                "skill": round(float(1 - g["wis"].mean() / g["wis_base"].mean()), 4),
+                "cov50": round(float(g["in50"].mean()), 3), "cov90": round(float(g["in90"].mean()), 3),
+                "live_share": round(float(g["live"].mean()), 2), "version": str(g["version"].mode().iloc[0])}
+
+    daily = [{"date": d, **agg(g)} for d, g in r.groupby("date")]
+    cutoff = pd.DatetimeIndex(r["candle_time"]).max() - pd.Timedelta(days=7)
+    last7 = r[pd.DatetimeIndex(r["candle_time"]) > cutoff]
+    return {"daily": daily, "last7": agg(last7) if len(last7) else None,
+            "by_version": {v: agg(g) for v, g in r.groupby("version")}}

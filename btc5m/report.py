@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from .forecast import LAMBDA, DirectionModel, model_verdict, monte_carlo, seasonal_factors
-from .learn import apply_dir_scale, calibrate, evaluate_history, evaluated_rows, recent_live, track_record
+from .forecast import LAMBDA, DirectionModel, load_events, model_verdict, monte_carlo, volatility_profile
+from .learn import apply_dir_scale, calibrate, evaluate_history, evaluated_rows, recent_live, scoreboard, track_record
 from .signals import snapshot
+
+# v1 = één volatiliteitsfactor; v2 = kalibratie per band + volatiliteit per uur; v3 = + macro-agenda
+MODEL_VERSION = "v3"
 
 DISCLAIMER = ("Dit is een statistische analyse, geen financieel advies. 5-minuten bewegingen van BTC "
               "zijn grotendeels ruis; gebruik de kansen als bandbreedte, niet als zekerheid.")
@@ -25,10 +28,13 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
     model = DirectionModel(horizon=model_horizon)
     bt = model.walk_forward(df) if backtest else {}
     ev = evaluate_history(history if history is not None else pd.DataFrame(), df)
-    s2 = seasonal_factors(df)
-    cal = calibrate(df, ev, getattr(model, "last_oos", None), s2)
-    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"], season=s2,
+    events = load_events()
+    vol = volatility_profile(df, events)
+    s2 = vol["s2"]
+    cal = calibrate(df, ev, getattr(model, "last_oos", None), vol)
+    mc = monte_carlo(df, horizons=horizons, levels=snap["levels"], season=vol,
                      targets={"c50": cal["c50"], "c90": cal["c90"]})
+    cal["event_m0"], cal["event_m1"], cal["event_n"] = round(vol["m0"], 3), round(vol["m1"], 3), vol["n_events"]
     cal["k50"], cal["k90"], cal["season_now"] = mc["k50"], mc["k90"], mc["season_now"]
     now = model.predict_now(df)
     now["p_up_raw"] = now["p_up"]
@@ -39,6 +45,8 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
             "lambda": LAMBDA, "horizon_bars": model_horizon,
             "dir_scale": cal["dir_scale"], "c50": cal["c50"], "c90": cal["c90"],
             "season": np.round(np.sqrt(s2), 4).tolist(), "sigma_des": mc.pop("sigma_des"),
+            "event_m0": round(vol["m0"], 4), "event_m1": round(vol["m1"], 4),
+            "events": upcoming_events(events, df.index[-1]),
             "z_sample": mc.pop("z_sample"), "direction": now.pop("params"),
             "generated_from": df.index[-1].isoformat(),
         },
@@ -56,9 +64,19 @@ def analyse(df: pd.DataFrame, horizons=(1, 3, 6, 12), model_horizon: int = 3,
         "direction_model": now,
         "backtest": bt,
         "model_verdict": model_verdict(bt) if backtest else "niet getest",
-        "learning": {"calibration": cal, "track_record": track_record(ev), "recent_live": recent_live(ev)},
+        "model_version": MODEL_VERSION,
+        "learning": {"calibration": cal, "track_record": track_record(ev), "recent_live": recent_live(ev),
+                     "scoreboard": scoreboard(ev, df)},
         "disclaimer": DISCLAIMER,
     }
+
+
+def upcoming_events(events: pd.DataFrame, now: pd.Timestamp, back_days: int = 4, ahead_days: int = 30) -> list[dict]:
+    """Events voor het dashboard: recente (nodig om de candles op te schonen) en komende."""
+    if events is None or len(events) == 0:
+        return []
+    sel = events[(events["time"] >= now - pd.Timedelta(days=back_days)) & (events["time"] <= now + pd.Timedelta(days=ahead_days))]
+    return [{"t": int(t.timestamp() * 1000), "name": n, "impact": int(i)} for t, n, i in zip(sel["time"], sel["name"], sel["impact"])]
 
 
 def _f(x: float, d: int = 1) -> str:
@@ -96,7 +114,9 @@ def to_markdown(a: dict) -> str:
     d = a.get("derivatives") or {}
     if d and "error" not in d:
         L.append("## Futures-context")
-        L.append(f"- Funding rate: {d['funding_rate'] * 100:+.4f}% per 8u (volgende: {d['next_funding_time'][:16]})")
+        if d.get("funding_rate") is not None:
+            nxt = f" (volgende: {d['next_funding_time'][:16]})" if d.get("next_funding_time") else ""
+            L.append(f"- Funding rate: {d['funding_rate'] * 100:+.4f}% per 8u{nxt}")
         if d.get("premium") is not None:
             L.append(f"- Premium t.o.v. index: {d['premium'] * 100:+.4f}%")
         L.append(f"- Open interest: {_f(d['open_interest_btc'], 0)} BTC (≈ ${d['open_interest_usd'] / 1e9:.2f} mld)\n")
@@ -152,6 +172,10 @@ def to_markdown(a: dict) -> str:
                  + (f", eigen track record {c['c50_history']:.2f}/{hist:.2f} op n={c['n_history_range']}" if hist else "")
                  + f") → correctie 50%-band ×{c['k50']:.2f}, 90%-band ×{c['k90']:.2f}")
         L.append(f"- Vertrouwen in richtingsmodel: {c['dir_scale']:.2f} (0 = negeren, 1 = ruwe kans klopt)")
+        sb = (lr.get("scoreboard") or {}).get("last7")
+        if sb:
+            L.append(f"- Scorebord (laatste 7 dagen, {sb['n']} voorspellingen): {sb['skill']:+.1%} beter dan een naïeve band "
+                     f"(WIS {sb['wis']:.3f}% vs {sb['wis_base']:.3f}%); dekking 50% {sb['cov50']:.0%}, 90% {sb['cov90']:.0%}")
         of = lr.get("orderflow") or {}
         if of.get("status") == "verzamelen":
             L.append(f"- Orderflow: {of.get('bars', 0)} van {of.get('needed', 2000)} candles verzameld "

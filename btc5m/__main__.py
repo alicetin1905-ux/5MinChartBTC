@@ -16,7 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     a = sub.add_parser("analyse", aliases=["analyze"], help="Volledige analyse + kansverwachting")
-    a.add_argument("--source", choices=["okx", "binance"], default="okx")
+    a.add_argument("--source", choices=["okx", "kraken", "coinbase", "binance"], default="okx")
     a.add_argument("--bars", type=int, default=3000, help="Aantal 5m candles (standaard 3000 ≈ 10 dagen)")
     a.add_argument("--csv", help="Gebruik lokale CSV in plaats van live data")
     a.add_argument("--horizons", default="1,3,6,12", help="Horizons in candles, bijv. 1,3,6,12")
@@ -27,13 +27,13 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--history", help="history.csv van eerdere runs: toetsen en daarvan leren")
 
     f = sub.add_parser("fetch", help="Sla candles op als CSV")
-    f.add_argument("--source", choices=["okx", "binance"], default="okx")
+    f.add_argument("--source", choices=["okx", "kraken", "coinbase", "binance"], default="okx")
     f.add_argument("--bars", type=int, default=3000)
     f.add_argument("--out", default="data/btc_5m.csv")
 
     r = sub.add_parser("run", help="Eén geplande run: analyse, rapporten en geschiedenis bijwerken")
     r.add_argument("--outdir", default="reports")
-    r.add_argument("--sources", default="okx,binance", help="Bronnen in volgorde van voorkeur")
+    r.add_argument("--sources", default="okx,kraken,coinbase,binance", help="Bronnen in volgorde van voorkeur")
     r.add_argument("--bars", type=int, default=8640, help="Standaard 8640 ≈ 30 dagen (meer leerdata)")
     r.add_argument("--agent", choices=["auto", "on", "off"], default="auto",
                    help="Claude-samenvatting: auto = alleen als ANTHROPIC_API_KEY gezet is")

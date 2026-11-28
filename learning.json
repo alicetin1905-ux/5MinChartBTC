@@ -1,0 +1,361 @@
+{
+  "calibration": {
+    "c50": 0.5327,
+    "c90": 1.6013,
+    "c50_candles": 0.5473,
+    "c90_candles": 1.6314,
+    "c50_history": 0.5085,
+    "c90_history": 1.5512,
+    "dir_scale": 0.6309,
+    "n_history_range": 120,
+    "n_history_direction": 1472,
+    "event_m0": 8.066,
+    "event_m1": 0.914,
+    "event_n": 2,
+    "k50": 0.9387,
+    "k90": 1.0843,
+    "season_now": 0.9436732853970593
+  },
+  "track_record": {
+    "n_direction": 1472,
+    "n_range": 1469,
+    "hit_rate": 0.5230978260869565,
+    "share_up": 0.48709239130434784,
+    "brier_raw": 0.2505188755502717,
+    "brier_calibrated": 0.24953703095108692,
+    "coverage_90": 0.8754254594962559,
+    "coverage_50": 0.5510899182561307,
+    "since": "2026-11-13 10:35",
+    "n_replay": 1344,
+    "n_live": 128
+  },
+  "recent_live": [
+    {
+      "time": "2026-11-28T19:40:00+00:00",
+      "price": 59305.2,
+      "p_up": 0.5044,
+      "went_up": true,
+      "correct": true,
+      "price_60m": null,
+      "inside_90": null
+    },
+    {
+      "time": "2026-11-28T19:25:00+00:00",
+      "price": 59298.1,
+      "p_up": 0.5086,
+      "went_up": true,
+      "correct": true,
+      "price_60m": null,
+      "inside_90": null
+    },
+    {
+      "time": "2026-11-28T19:10:00+00:00",
+      "price": 59288.8,
+      "p_up": 0.4941,
+      "went_up": true,
+      "correct": false,
+      "price_60m": null,
+      "inside_90": null
+    },
+    {
+      "time": "2026-11-28T18:55:00+00:00",
+      "price": 59453.8,
+      "p_up": 0.4706,
+      "went_up": false,
+      "correct": true,
+      "price_60m": 59318.9,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T18:40:00+00:00",
+      "price": 59445.8,
+      "p_up": 0.4846,
+      "went_up": true,
+      "correct": false,
+      "price_60m": 59305.2,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T18:25:00+00:00",
+      "price": 59374.5,
+      "p_up": 0.5036,
+      "went_up": true,
+      "correct": true,
+      "price_60m": 59298.1,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T18:10:00+00:00",
+      "price": 59399.6,
+      "p_up": 0.5045,
+      "went_up": false,
+      "correct": false,
+      "price_60m": 59288.8,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T17:55:00+00:00",
+      "price": 59377.0,
+      "p_up": 0.5119,
+      "went_up": true,
+      "correct": true,
+      "price_60m": 59453.8,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T17:40:00+00:00",
+      "price": 59421.0,
+      "p_up": 0.5039,
+      "went_up": false,
+      "correct": false,
+      "price_60m": 59445.8,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T17:25:00+00:00",
+      "price": 59487.4,
+      "p_up": 0.4742,
+      "went_up": false,
+      "correct": true,
+      "price_60m": 59374.5,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T17:10:00+00:00",
+      "price": 59596.9,
+      "p_up": 0.4594,
+      "went_up": false,
+      "correct": true,
+      "price_60m": 59399.6,
+      "inside_90": true
+    },
+    {
+      "time": "2026-11-28T16:55:00+00:00",
+      "price": 59562.5,
+      "p_up": 0.4642,
+      "went_up": true,
+      "correct": false,
+      "price_60m": 59377.0,
+      "inside_90": true
+    }
+  ],
+  "scoreboard": {
+    "daily": [
+      {
+        "date": "2026-11-13",
+        "n": 54,
+        "wis": 0.23964,
+        "wis_base": 0.23741,
+        "skill": -0.0094,
+        "cov50": 0.63,
+        "cov90": 0.889,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-14",
+        "n": 96,
+        "wis": 0.3479,
+        "wis_base": 0.34077,
+        "skill": -0.0209,
+        "cov50": 0.552,
+        "cov90": 0.812,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-15",
+        "n": 96,
+        "wis": 0.42799,
+        "wis_base": 0.49686,
+        "skill": 0.1386,
+        "cov50": 0.573,
+        "cov90": 0.854,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-16",
+        "n": 96,
+        "wis": 0.26493,
+        "wis_base": 0.27411,
+        "skill": 0.0335,
+        "cov50": 0.521,
+        "cov90": 0.917,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-17",
+        "n": 96,
+        "wis": 0.25732,
+        "wis_base": 0.25254,
+        "skill": -0.019,
+        "cov50": 0.542,
+        "cov90": 0.906,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-18",
+        "n": 96,
+        "wis": 0.24408,
+        "wis_base": 0.2481,
+        "skill": 0.0162,
+        "cov50": 0.458,
+        "cov90": 0.854,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-19",
+        "n": 96,
+        "wis": 0.26023,
+        "wis_base": 0.26572,
+        "skill": 0.0207,
+        "cov50": 0.552,
+        "cov90": 0.948,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-20",
+        "n": 96,
+        "wis": 0.41182,
+        "wis_base": 0.41027,
+        "skill": -0.0038,
+        "cov50": 0.573,
+        "cov90": 0.896,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-21",
+        "n": 96,
+        "wis": 0.60085,
+        "wis_base": 0.64207,
+        "skill": 0.0642,
+        "cov50": 0.656,
+        "cov90": 0.833,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-22",
+        "n": 96,
+        "wis": 0.30535,
+        "wis_base": 0.31121,
+        "skill": 0.0188,
+        "cov50": 0.583,
+        "cov90": 0.865,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-23",
+        "n": 96,
+        "wis": 0.39749,
+        "wis_base": 0.38229,
+        "skill": -0.0398,
+        "cov50": 0.698,
+        "cov90": 0.917,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-24",
+        "n": 96,
+        "wis": 0.31003,
+        "wis_base": 0.31141,
+        "skill": 0.0044,
+        "cov50": 0.448,
+        "cov90": 0.844,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-25",
+        "n": 96,
+        "wis": 0.30977,
+        "wis_base": 0.31776,
+        "skill": 0.0251,
+        "cov50": 0.448,
+        "cov90": 0.844,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-26",
+        "n": 96,
+        "wis": 0.1817,
+        "wis_base": 0.18989,
+        "skill": 0.0431,
+        "cov50": 0.469,
+        "cov90": 0.844,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-27",
+        "n": 90,
+        "wis": 0.30612,
+        "wis_base": 0.32214,
+        "skill": 0.0497,
+        "cov50": 0.644,
+        "cov90": 0.9,
+        "live_share": 0.53,
+        "version": "v1"
+      },
+      {
+        "date": "2026-11-28",
+        "n": 76,
+        "wis": 0.13329,
+        "wis_base": 0.1674,
+        "skill": 0.2037,
+        "cov50": 0.5,
+        "cov90": 0.895,
+        "live_share": 1.0,
+        "version": "v3"
+      }
+    ],
+    "last7": {
+      "n": 666,
+      "wis": 0.27706,
+      "wis_base": 0.28951,
+      "skill": 0.043,
+      "cov50": 0.55,
+      "cov90": 0.875,
+      "live_share": 0.19,
+      "version": "v1"
+    },
+    "by_version": {
+      "v1": {
+        "n": 1349,
+        "wis": 0.32449,
+        "wis_base": 0.33275,
+        "skill": 0.0248,
+        "cov50": 0.554,
+        "cov90": 0.873,
+        "live_share": 0.0,
+        "version": "v1"
+      },
+      "v3": {
+        "n": 119,
+        "wis": 0.23156,
+        "wis_base": 0.27044,
+        "skill": 0.1438,
+        "cov50": 0.521,
+        "cov90": 0.899,
+        "live_share": 1.0,
+        "version": "v3"
+      }
+    }
+  },
+  "orderflow": {
+    "status": "verzamelen",
+    "bars": 476,
+    "needed": 2000,
+    "days": 1.7,
+    "since": "2026-11-27 04:20"
+  }
+}

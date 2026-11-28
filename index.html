@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTC 5m analist</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="Live, interactieve analyse van de 5-minuten chart van BTC perpetual futures: koers, indicatoren, Monte Carlo-simulatie en richtingsmodel, allemaal zichtbaar berekend in je browser.">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f9; --surface-1: #ffffff; --surface-2: #f3f3f3;
+  --text-primary: #191919; --text-secondary: #666666;
+  --grid: #e7e7e7; --axis: #c2c2c2; --border: rgba(11, 11, 11, 0.10);
+  --series-1: #257de0; --up: #008a17; --down: #ec4647;
+  --up-text: #006c10; --down-text: #c42f30;
+  --ema9: #f47230; --ema21: #6a4ce2; --ema50: #ee7fac; --vwap: #f2a600; --bb: #999999;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0b0b0b; --surface-1: #191919; --surface-2: #222222;
+    --text-primary: #efefef; --text-secondary: #9c9c9c;
+    --grid: #303030; --axis: #474747; --border: rgba(255, 255, 255, 0.10);
+    --series-1: #338ced; --up: #0aac23; --down: #eb6263;
+    --up-text: #53c556; --down-text: #f07a7b;
+    --ema9: #e76624; --ema21: #9887ef; --ema50: #e24d8b; --vwap: #d28e05; --bb: #777777;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text-primary); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-top: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.spread { justify-content: space-between; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* status */
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); }
+.badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.badge.live i { background: var(--up); animation: pulse 1.6s infinite; }
+.badge.live { color: var(--text-primary); }
+.badge.warn i { background: var(--vwap); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--up) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+@media (max-width: 900px) { .hero { grid-template-columns: 1fr 1fr; } .hero .price-tile { grid-column: 1 / -1; } }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; min-width: 0; }
+.tile .label { color: var(--text-secondary); font-size: 12px; }
+.tile .value { font-size: 20px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.tile .delta { color: var(--text-secondary); font-size: 12px; }
+.price-tile .value { font-size: 34px; line-height: 1.15; transition: color .6s; }
+.price-tile .value.up { color: var(--up-text); transition: none; }
+.price-tile .value.down { color: var(--down-text); transition: none; }
+.bar { height: 4px; background: var(--surface-2); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--series-1); border-radius: 2px; width: 0; transition: width 1s linear; }
+
+/* controls */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 14px; }
+.group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.group > .lbl { color: var(--text-secondary); font-size: 12px; margin-right: 2px; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+.seg button, .chip, .btn {
+  font: inherit; font-size: 13px; border: 0; cursor: pointer; color: var(--text-primary);
+  background: transparent; padding: 4px 10px; border-radius: 6px;
+}
+.seg button[aria-pressed="true"] { background: var(--surface-1); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border-radius: 999px; padding: 3px 10px; }
+.chip i { width: 14px; height: 2px; border-radius: 1px; }
+.chip[aria-pressed="false"] { opacity: .45; }
+.chip[aria-pressed="false"] i { background: var(--axis) !important; }
+.btn { background: var(--series-1); color: #fff; font-weight: 600; padding: 6px 14px; border-radius: 8px; }
+.btn:disabled { opacity: .6; cursor: progress; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+input[type=range] { accent-color: var(--series-1); width: 110px; }
+
+/* chart */
+.chartwrap { position: relative; margin-top: 10px; }
+canvas { display: block; width: 100%; }
+#chart { touch-action: pan-y; cursor: crosshair; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 12px; margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.k-line { width: 14px; height: 2px; border-radius: 1px; background: var(--series-1); }
+.k-rect { width: 12px; height: 9px; border-radius: 2px; background: var(--series-1); }
+.k-up { width: 8px; height: 11px; border: 1.5px solid var(--up); border-radius: 1px; }
+.k-down { width: 8px; height: 11px; background: var(--down); border-radius: 1px; }
+.simstatus { color: var(--text-secondary); font-size: 12px; min-height: 18px; }
+
+/* panels */
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1000px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.steps { margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; }
+.steps li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 6px 0; border-top: 1px solid var(--grid); }
+.steps li:first-child { border-top: 0; }
+.steps b.n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); font-size: 11px; }
+.steps li.active b.n { background: var(--series-1); color: #fff; }
+.formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+.big { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin-top: 8px; }
+.kv dt { color: var(--text-secondary); } .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* bijdragen richtingsmodel */
+.contrib { margin-top: 10px; font-size: 12px; }
+.contrib .r { display: grid; grid-template-columns: 118px 1fr 52px; align-items: center; gap: 6px; height: 21px; }
+.contrib .nm { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contrib .track { position: relative; height: 10px; }
+.contrib .track::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--axis); }
+.contrib .fill { position: absolute; top: 0; height: 10px; border-radius: 2px; transition: left .6s, width .6s, background-color .6s; }
+.contrib .val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* indicatoren */
+.gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 8px; }
+.gauge .label { color: var(--text-secondary); font-size: 12px; }
+.gauge .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.needle { transition: transform .8s cubic-bezier(.3,1.4,.5,1); transform-origin: 50px 50px; }
+.meter { position: relative; height: 8px; border-radius: 4px; background: var(--surface-2); margin-top: 6px; }
+.meter i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--text-primary); transition: left .8s; }
+.votes { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+.votes li { display: flex; justify-content: space-between; padding: 2px 0; transition: background-color 1s; }
+.votes li.flash { background: color-mix(in srgb, var(--series-1) 18%, transparent); }
+.votes .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* tabellen / tape */
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+th { text-align: left; color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+th, td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.tape { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; min-height: 262px; }
+.tape li { display: grid; grid-template-columns: 62px 16px 1fr 70px; gap: 4px; padding: 2px 0; font-variant-numeric: tabular-nums; animation: slidein .35s ease-out; }
+.tape .t { color: var(--text-secondary); }
+.tape .sz { text-align: right; color: var(--text-secondary); }
+.tape li.big-trade { font-weight: 700; }
+@keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.ok { color: var(--up-text); } .no { color: var(--down-text); }
+.prose { white-space: pre-wrap; font-size: 14px; margin-top: 10px; }
+footer { color: var(--text-secondary); font-size: 12px; margin-top: 22px; }
+footer a { color: inherit; }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.14); padding: 8px 10px; font-size: 12px; min-width: 160px; }
+.tip .t { color: var(--text-secondary); margin-bottom: 3px; }
+.tip .r { display: flex; justify-content: space-between; gap: 14px; }
+.tip .r span { color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; }
+.tip .r b { font-variant-numeric: tabular-nums; }
+.tip .r i { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="row spread">
+    <div>
+      <h1>BTC perpetual · 5m analist</h1>
+      <p class="sub" id="meta">Laden…</p>
+    </div>
+    <span class="badge" id="conn"><i></i><span>verbinden…</span></span>
+  </header>
+
+  <section class="hero">
+    <div class="tile price-tile">
+      <div class="label">BTC-USDT perpetual · live</div>
+      <div class="value" id="price">—</div>
+      <div class="delta" id="priceDelta">&nbsp;</div>
+    </div>
+    <div class="tile"><div class="label">Candle sluit over</div><div class="value" id="cdCandle">—</div><div class="bar"><i id="cdCandleBar"></i></div></div>
+    <div class="tile"><div class="label">Kans hoger over 15 min (live)</div><div class="value" id="pLive">—</div><div class="delta" id="pLiveSub">&nbsp;</div></div>
+    <div class="tile"><div class="label">Bandbreedte komend uur (90%)</div><div class="value" id="band60">—</div><div class="delta" id="band60Sub">&nbsp;</div></div>
+    <div class="tile"><div class="label">Technische bias</div><div class="value" id="bias">—</div><div class="delta" id="biasSub">&nbsp;</div></div>
+  </section>
+
+  <section class="controls" aria-label="Instellingen grafiek en simulatie">
+    <div class="group"><span class="lbl">Bereik</span>
+      <div class="seg" id="rangeSeg">
+        <button data-v="36">3u</button><button data-v="72" aria-pressed="true">6u</button><button data-v="144">12u</button><button data-v="288">24u</button>
+      </div>
+    </div>
+    <div class="group" id="overlays"><span class="lbl">Lijnen</span>
+      <button class="chip" data-k="ema9" aria-pressed="true"><i style="background:var(--ema9)"></i>EMA 9</button>
+      <button class="chip" data-k="ema21" aria-pressed="true"><i style="background:var(--ema21)"></i>EMA 21</button>
+      <button class="chip" data-k="ema50" aria-pressed="false"><i style="background:var(--ema50)"></i>EMA 50</button>
+      <button class="chip" data-k="vwap" aria-pressed="true"><i style="background:var(--vwap)"></i>VWAP</button>
+      <button class="chip" data-k="bb" aria-pressed="false"><i style="background:var(--bb)"></i>Bollinger</button>
+      <button class="chip" data-k="levels" aria-pressed="true"><i style="background:var(--text-secondary)"></i>Steun/weerstand</button>
+      <button class="chip" data-k="dots" aria-pressed="true"><i style="background:var(--series-1);width:6px;height:6px;border-radius:50%"></i>Bewegende dots</button>
+    </div>
+  </section>
+  <section class="controls" aria-label="Monte Carlo-instellingen">
+    <div class="group"><span class="lbl">Simulatie: horizon</span>
+      <div class="seg" id="horizonSeg">
+        <button data-v="3">15m</button><button data-v="6">30m</button><button data-v="12" aria-pressed="true">60m</button><button data-v="24">2u</button>
+      </div>
+    </div>
+    <div class="group"><span class="lbl">paden</span>
+      <div class="seg" id="pathsSeg">
+        <button data-v="300">300</button><button data-v="2000" aria-pressed="true">2.000</button><button data-v="10000">10.000</button>
+      </div>
+    </div>
+    <div class="group"><label class="lbl" for="volSlider">extra volatiliteit</label>
+      <input type="range" id="volSlider" min="0.5" max="2" step="0.01" value="1" title="Extra factor bovenop de geleerde kalibratie (wat-als)">
+      <span class="num" id="volVal" style="font-size:13px;min-width:92px">×1,00</span>
+    </div>
+    <button class="btn" id="simBtn">▶ Simuleer</button>
+  </section>
+
+  <section class="card">
+    <div class="row spread">
+      <h2>Koers, indicatoren en Monte Carlo-verwachting</h2>
+      <span class="simstatus" id="simStatus"></span>
+    </div>
+    <div class="chartwrap"><canvas id="chart" tabindex="0" role="img" aria-label="Candlestick-grafiek van BTC met verwachting. Pijltjestoetsen bewegen de cursor."></canvas></div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="k-up"></i>stijgende candle (hol)</span>
+      <span><i class="k-down"></i>dalende candle (gevuld)</span>
+      <span><i class="k-line" style="opacity:.25"></i>gesimuleerde paden</span>
+      <span><i class="k-rect" style="opacity:.32"></i>50% kans</span>
+      <span><i class="k-rect" style="opacity:.14"></i>90% kans</span>
+      <span><i class="k-line"></i>mediaan</span>
+      <span><i style="width:7px;height:7px;border-radius:50%;background:var(--up)"></i><i style="width:7px;height:7px;border-radius:50%;background:var(--down);margin-left:-4px"></i>dot = één gesimuleerd pad (groen eindigt hoger, rood lager)</span>
+    </div>
+    <p class="sub">De dots landen rechts en stapelen zich op tot de kansverdeling. Beweeg de muis (of tik) in het verwachtingsgebied om de kans voor elk prijsniveau te zien.</p>
+  </section>
+
+  <div class="grid3">
+    <section class="card">
+      <h2>Berekening 1 · Monte Carlo</h2>
+      <p class="sub">Duizenden mogelijke koerspaden; de verdeling van de eindprijzen geeft de bandbreedte.</p>
+      <canvas id="hist" aria-label="Histogram van gesimuleerde eindprijzen"></canvas>
+      <ol class="steps" id="mcSteps">
+        <li data-s="1"><b class="n">1</b><div>Volatiliteit nu (EWMA, gecorrigeerd voor het tijdstip)<div class="formula" id="mcSigma">σ² = 0,94·σ²₋₁ + 0,06·r²</div></div></li>
+        <li data-s="2"><b class="n">2</b><div>Geleerde kalibratie per band (dikke staarten)<div class="formula" id="mcScale">—</div></div></li>
+        <li data-s="3"><b class="n">3</b><div>Per stap: schok uit historische rendementen<div class="formula">P<sub>t+1</sub> = P<sub>t</sub>·e<sup>σ·z − ½σ²</sup></div></div></li>
+        <li data-s="4"><b class="n">4</b><div>Uitkomst <span id="mcHz">over 60 min</span><div class="formula" id="mcResult">—</div></div></li>
+      </ol>
+      <p class="sub" id="macroNext" style="margin-top:8px"></p>
+      <h2 style="margin-top:10px;font-size:13px">Volatiliteit per uur</h2>
+      <svg id="seasonChart" width="100%" height="74" aria-label="Gemiddelde volatiliteit per uur van de dag"></svg>
+    </section>
+
+    <section class="card">
+      <h2>Berekening 2 · Richtingsmodel</h2>
+      <p class="sub">Logistische regressie: elke feature duwt de kans omhoog (groen) of omlaag (rood). Herberekend bij elke tick.</p>
+      <div class="contrib" id="contrib"></div>
+      <svg id="sigmoid" viewBox="0 0 300 92" width="100%" aria-label="Sigmoïde: van som naar kans"></svg>
+      <div class="formula" id="dirFormula" style="margin-top:4px">—</div>
+    </section>
+
+    <section class="card">
+      <h2>Indicatoren live</h2>
+      <div class="gauges">
+        <div class="gauge">
+          <div class="label">RSI 14</div>
+          <svg viewBox="0 0 100 58" width="100%" style="max-width:150px">
+            <path d="M10 50 A40 40 0 0 1 90 50" fill="none" stroke="var(--surface-2)" stroke-width="9"/>
+            <path d="M10 50 A40 40 0 0 1 17.6 26.5" fill="none" stroke="var(--up)" stroke-opacity=".45" stroke-width="9"/>
+            <path d="M82.4 26.5 A40 40 0 0 1 90 50" fill="none" stroke="var(--down)" stroke-opacity=".45" stroke-width="9"/>
+            <g class="needle" id="rsiNeedle"><line x1="50" y1="50" x2="50" y2="16" stroke="var(--text-primary)" stroke-width="2.5" stroke-linecap="round"/></g>
+            <circle cx="50" cy="50" r="4" fill="var(--text-primary)"/>
+          </svg>
+          <div class="value" id="rsiVal">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">MACD-histogram (laatste 4 uur)</div>
+          <svg id="macdSpark" viewBox="0 0 150 58" width="100%" preserveAspectRatio="none" style="height:58px"></svg>
+          <div class="value" id="macdVal">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">Bollinger %B</div>
+          <div class="meter"><i id="pctbMark"></i></div>
+          <div class="value" id="pctbVal" style="margin-top:4px">—</div>
+        </div>
+        <div class="gauge">
+          <div class="label">Volatiliteit σ per 5m (laatste 6 uur)</div>
+          <svg id="sigmaSpark" viewBox="0 0 150 40" width="100%" preserveAspectRatio="none" style="height:40px"></svg>
+          <div class="value" id="sigmaVal">—</div>
+        </div>
+      </div>
+      <h2 style="margin-top:12px">Scorekaart <span class="sub" id="scoreTotal"></span></h2>
+      <ul class="votes" id="votes"></ul>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Live transacties</h2>
+      <p class="sub" id="tapeSub">Elke trade op OKX BTC-USDT-SWAP, zodra hij plaatsvindt.</p>
+      <ul class="tape" id="tape"></ul>
+    </section>
+    <section class="card">
+      <h2>Kansverdeling (live)</h2>
+      <p class="sub">Prijs waarbinnen de koers met 50% en 90% kans uitkomt, en de kans om niveaus te raken.</p>
+      <div class="scroll"><table id="dist"></table></div>
+      <dl class="kv" id="futures"></dl>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="row spread">
+      <h2>Zelflerend · voorspelling tegenover werkelijkheid</h2>
+      <div class="seg" id="evalSeg"><button data-v="all" aria-pressed="true">alles</button><button data-v="live">alleen live</button></div>
+    </div>
+    <p class="sub" id="evalSub"></p>
+    <div class="grid2" style="gap:18px">
+      <div>
+        <svg id="bandChart" width="100%" height="240" aria-label="Voorspelde 90%-banden en werkelijke uitkomsten"></svg>
+        <div class="legend" aria-hidden="true">
+          <span><i class="k-rect" style="opacity:.25;height:12px;width:4px"></i>90%-band</span>
+          <span><i class="k-rect" style="opacity:.55;height:12px;width:4px"></i>50%-band</span>
+          <span><i style="width:8px;height:8px;border-radius:50%;background:var(--text-secondary)"></i>uitkomst binnen band</span>
+          <span><i style="width:8px;height:8px;border-radius:50%;background:var(--down)"></i>uitkomst buiten band</span>
+        </div>
+      </div>
+      <div>
+        <svg id="calChart" width="100%" height="240" aria-label="Kalibratie: voorspelde kans tegenover werkelijke frequentie"></svg>
+        <p class="sub">Kalibratie: liggen de punten op de diagonaal, dan klopt "55% kans" ook echt in 55% van de gevallen. Een vlakke lijn rond 50% betekent: richting is toeval.</p>
+      </div>
+    </div>
+    <div class="row" id="learnTiles" style="margin-top:10px;gap:12px"></div>
+    <h2 style="margin-top:16px">Scorebord · kwaliteit van de bandbreedte per dag</h2>
+    <p class="sub">Vaardigheid = hoeveel beter de banden scoren dan een naïeve band (de spreiding van de 24 uur ervoor). Boven de nullijn = beter dan naïef. De score bestraft te brede banden én uitkomsten buiten de band.</p>
+    <svg id="skillChart" width="100%" height="200" aria-label="Vaardigheid per dag ten opzichte van een naïeve band"></svg>
+  </section>
+
+  <section class="card">
+    <h2>Laatste live voorspellingen van de server</h2>
+    <div class="scroll"><table id="recent"></table></div>
+  </section>
+
+  <section class="card" id="agentCard" hidden>
+    <h2>Interpretatie door Claude</h2>
+    <div class="prose" id="agent"></div>
+  </section>
+
+  <footer>
+    <p>Statistische analyse, geen financieel advies. Op de 5-minuten chart is de richting van BTC grotendeels ruis; gebruik de kansen als bandbreedte, niet als zekerheid.</p>
+    <p>Live koersen: OKX publieke API, rechtstreeks in je browser. Modelparameters en track record: server-run elke 15 min.
+      Data: <a href="latest.json">latest.json</a> · <a href="model.json">model.json</a> · <a href="history.csv">history.csv</a> · <a href="latest.md">latest.md</a> ·
+      <a href="https://github.com/alicetin1905-ux/5MinChartBTC">broncode</a> · <a href="?demo=1">demo-modus</a></p>
+  </footer>
+</main>
+<div class="tip" id="tip" hidden></div>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
